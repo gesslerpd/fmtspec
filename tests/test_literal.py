@@ -54,10 +54,9 @@ def test_decode_partial_mismatch_raises() -> None:
 
 def test_in_format_dict() -> None:
     """Literal should work within a format dict."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
     fmt = {
         "magic": types.Literal(b"\x89PNG"),
-        "version": u2,
+        "version": types.u16,
     }
 
     data = encode({"magic": None, "version": 1}, fmt)
@@ -76,10 +75,9 @@ def test_empty_literal() -> None:
 
 def test_roundtrip_with_data() -> None:
     """Literal should roundtrip correctly in a compound format."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
     fmt = {
         "header": types.Literal(b"\x00\x01"),
-        "length": u1,
+        "length": types.u8,
         "data": types.Bytes(size=3),
         "footer": types.Literal(b"\xff"),
     }

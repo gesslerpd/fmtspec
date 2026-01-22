@@ -7,10 +7,10 @@ from fmtspec import DecodeError, EncodeError, decode, encode, types
 
 def test_int_has_size() -> None:
     """Int types should have their byte size."""
-    assert types.Int(byteorder="big", signed=False, size=1).size == 1
-    assert types.Int(byteorder="big", signed=False, size=2).size == 2
-    assert types.Int(byteorder="little", signed=True, size=4).size == 4
-    assert types.Int(byteorder="big", signed=False, size=8).size == 8
+    assert types.u8.size == types.u8le.size == types.i8.size == types.i8le.size == 1
+    assert types.u16.size == types.u16le.size == types.i16.size == types.i16le.size == 2
+    assert types.u32.size == types.u32le.size == types.i32.size == types.i32le.size == 4
+    assert types.u64.size == types.u64le.size == types.i64.size == types.i64le.size == 8
 
 
 def test_bytes_has_size() -> None:
@@ -22,8 +22,7 @@ def test_bytes_has_size() -> None:
 
 
 def test_prefixed_bytes_size_is_none() -> None:
-    prefix_fmt = types.Int(byteorder="big", signed=False, size=2)
-    assert types.Sized(length=prefix_fmt, fmt=types.Bytes()).size is ...
+    assert types.Sized(length=types.u16, fmt=types.Bytes()).size is ...
 
 
 def test_terminated_string_size_is_none() -> None:
@@ -33,8 +32,7 @@ def test_terminated_string_size_is_none() -> None:
 
 def test_prefixed_array_size_is_none() -> None:
     """PrefixedArray is variable-size, so size should be None."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
-    assert types.Array(element_fmt=u2, dims=(u2,)).size is ...
+    assert types.Array(element_fmt=types.u16, dims=(types.u16,)).size is ...
 
 
 def test_switch_size_is_none() -> None:
@@ -49,10 +47,9 @@ def test_sized_size_is_none() -> None:
 
 def test_decode_simple() -> None:
     """Sized should read exactly the number of bytes from context key."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "length": u2,
+        "length": types.u16,
         "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
@@ -65,12 +62,10 @@ def test_decode_simple() -> None:
 
 def test_decode_with_inner_format() -> None:
     """Sized should pass bounded data to inner format."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
-    inner_fmt = {"a": u1, "b": u1}
+    inner_fmt = {"a": types.u8, "b": types.u8}
     fmt = {
-        "size": u2,
+        "size": types.u16,
         "body": types.Sized(length=types.Ref("size"), fmt=inner_fmt),
     }
 
@@ -83,10 +78,9 @@ def test_decode_with_inner_format() -> None:
 
 def test_encode_simple() -> None:
     """Sized should encode and verify length matches context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "length": u2,
+        "length": types.u16,
         "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
@@ -98,12 +92,10 @@ def test_encode_simple() -> None:
 
 def test_encode_with_inner_format() -> None:
     """Sized should encode inner format and verify length."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
-    inner_fmt = {"a": u1, "b": u1}
+    inner_fmt = {"a": types.u8, "b": types.u8}
     fmt = {
-        "size": u2,
+        "size": types.u16,
         "body": types.Sized(length=types.Ref("size"), fmt=inner_fmt),
     }
 
@@ -115,10 +107,9 @@ def test_encode_with_inner_format() -> None:
 
 def test_encode_length_mismatch_raises() -> None:
     """Sized should raise if encoded length doesn't match context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "length": u2,
+        "length": types.u16,
         "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
@@ -133,15 +124,14 @@ def test_encode_length_mismatch_raises() -> None:
 
 def test_roundtrip() -> None:
     """Sized should roundtrip correctly."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "header_size": u2,
+        "header_size": types.u16,
         "header": types.Sized(
             length=types.Ref("header_size"),
-            fmt={"version": u2, "flags": u2},
+            fmt={"version": types.u16, "flags": types.u16},
         ),
-        "payload_size": u2,
+        "payload_size": types.u16,
         "payload": types.Sized(length=types.Ref("payload_size"), fmt=types.Bytes()),
     }
 
@@ -160,10 +150,9 @@ def test_roundtrip() -> None:
 
 def test_decode_missing_key_raises() -> None:
     """Sized should raise DecodeError with KeyError as cause if the key is missing from context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "length": u2,
+        "length": types.u16,
         "data": types.Sized(length=types.Ref("wrong_key"), fmt=types.Bytes()),
     }
 
@@ -177,10 +166,9 @@ def test_decode_missing_key_raises() -> None:
 
 def test_encode_missing_key_raises() -> None:
     """Sized should raise EncodeError with KeyError as cause if the key is missing from context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "length": u2,
+        "length": types.u16,
         "data": types.Sized(length=types.Ref("wrong_key"), fmt=types.Bytes()),
     }
 

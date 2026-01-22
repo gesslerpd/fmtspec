@@ -15,15 +15,8 @@ def sizeof(fmt: Format) -> Size:
         fmt: A Type, Mapping (dict), or Iterable (tuple/list) format.
 
     Returns:
-        The total fixed byte size, or None if the format is variable/greedy.
+        The total fixed byte size, ellipsis if variable, or None if the format is greedy.
 
-    Examples:
-        >>> sizeof(Int(byteorder="big", signed=False, size=2))
-        2
-        >>> sizeof({"a": u1, "b": u2})  # 1 + 2 = 3
-        3
-        >>> sizeof(Bytes())  # greedy
-        None
     """
     if hasattr(fmt, "size") and getattr(fmt, "encode", None) and getattr(fmt, "decode", None):
         return fmt.size  # type: ignore[attr-defined]

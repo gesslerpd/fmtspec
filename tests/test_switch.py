@@ -7,12 +7,10 @@ from fmtspec import DecodeError, EncodeError, decode, encode, types
 
 def test_decode_known_case() -> None:
     """Switch should decode using the matched case format."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
-    inner_fmt = {"a": u1, "b": u1}
+    inner_fmt = {"a": types.u8, "b": types.u8}
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
             cases={1: inner_fmt},
@@ -28,13 +26,12 @@ def test_decode_known_case() -> None:
 
 def test_decode_unknown_case_returns_raw_bytes() -> None:
     """Switch should return raw bytes for unknown cases with no default."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
-            cases={1: {"x": u2}},
+            cases={1: {"x": types.u16}},
             default=None,
         ),
     }
@@ -48,12 +45,10 @@ def test_decode_unknown_case_returns_raw_bytes() -> None:
 
 def test_encode_known_case() -> None:
     """Switch should encode using the matched case format."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
-    inner_fmt = {"a": u1, "b": u1}
+    inner_fmt = {"a": types.u8, "b": types.u8}
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
             cases={1: inner_fmt},
@@ -69,13 +64,12 @@ def test_encode_known_case() -> None:
 
 def test_encode_unknown_case_raw_bytes() -> None:
     """Switch should encode raw bytes for unknown cases."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
-            cases={1: {"x": u2}},
+            cases={1: {"x": types.u16}},
             default=None,
         ),
     }
@@ -89,16 +83,14 @@ def test_encode_unknown_case_raw_bytes() -> None:
 
 def test_roundtrip() -> None:
     """Switch should roundtrip correctly."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
             cases={
-                1: {"a": u1, "b": u1},
-                2: {"x": u2, "y": u2},
+                1: {"a": types.u8, "b": types.u8},
+                2: {"x": types.u16, "y": types.u16},
             },
         ),
     }
@@ -112,13 +104,12 @@ def test_roundtrip() -> None:
 
 def test_decode_missing_key_raises() -> None:
     """Switch should raise DecodeError with KeyError as cause if the key is missing from context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("wrong_key"),
-            cases={1: {"x": u2}},
+            cases={1: {"x": types.u16}},
         ),
     }
 
@@ -133,13 +124,12 @@ def test_decode_missing_key_raises() -> None:
 
 def test_encode_missing_key_raises() -> None:
     """Switch should raise EncodeError with KeyError as cause if the key is missing from context."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("wrong_key"),
-            cases={1: {"x": u2}},
+            cases={1: {"x": types.u16}},
         ),
     }
 
@@ -153,10 +143,9 @@ def test_encode_missing_key_raises() -> None:
 
 def test_little_endian_prefix() -> None:
     """Switch should support little-endian length prefix."""
-    u2 = types.Int(byteorder="big", signed=False, size=2)
 
     fmt = {
-        "type": u2,
+        "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
             cases={},
@@ -175,21 +164,17 @@ def test_little_endian_prefix() -> None:
 
 def test_different_prefix_sizes() -> None:
     """Switch should support different prefix sizes."""
-    u1 = types.Int(byteorder="big", signed=False, size=1)
-
-    # Test with 1-byte prefix
     fmt1 = {
-        "type": u1,
+        "type": types.u8,
         "body": types.Switch(key=types.Ref("type"), cases={}),
     }
     obj = {"type": 1, "body": b"\xaa\xbb"}
     data1 = encode(obj, fmt1)
-    assert data1 == b"\x01\xaa\xbb"  # type=1, len=2 (1 byte), data
+    assert data1 == b"\x01\xaa\xbb"  # type=1, data
 
-    # Test with 4-byte prefix
     fmt4 = {
-        "type": u1,
+        "type": types.u8,
         "body": types.Switch(key=types.Ref("type"), cases={}),
     }
     data4 = encode(obj, fmt4)
-    assert data4 == b"\x01\xaa\xbb"  # type=1, len=2 (4 bytes), data
+    assert data4 == b"\x01\xaa\xbb"  # type=1, data

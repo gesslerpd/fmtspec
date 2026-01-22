@@ -6,69 +6,64 @@ Demonstrates nested dictionary format maps with the ende framework.
 
 from fmtspec import decode, encode, encode_inspect, format_tree, types
 
-# Big-endian integers (TLS uses network byte order)
-u1 = types.Int(byteorder="big", signed=False, size=1)
-u2 = types.Int(byteorder="big", signed=False, size=2)
-u4 = types.Int(byteorder="big", signed=False, size=4)
-
 # Format definitions matching Kaitai struct types
 
 # version:
 #   - major: u1
 #   - minor: u1
 version_fmt = {
-    "major": u1,
-    "minor": u1,
+    "major": types.u8,
+    "minor": types.u8,
 }
 
 # random:
 #   - gmt_unix_time: u4
 #   - random: size 28
 random_fmt = {
-    "gmt_unix_time": u4,
+    "gmt_unix_time": types.u32,
     "random": types.Bytes(28),
 }
 
 # session_id:
 #   - len: u1
 #   - sid: size len
-session_id_fmt = types.Sized(length=u1, fmt=types.Bytes())
+session_id_fmt = types.Sized(length=types.u8, fmt=types.Bytes())
 
 # cipher_suites:
 #   - len: u2
 #   - cipher_suites: u2 repeat (len/2 times)
 # Note: The len is byte length, and each cipher suite is 2 bytes
-cipher_suites_fmt = types.Sized(length=u2, fmt=types.array(u2))
+cipher_suites_fmt = types.Sized(length=types.u16, fmt=types.array(types.u16))
 
 
 # compression_methods:
 #   - len: u1
 #   - compression_methods: size len
-compression_methods_fmt = types.Sized(length=u1, fmt=types.Bytes())
+compression_methods_fmt = types.Sized(length=types.u8, fmt=types.Bytes())
 
 # server_name:
 #   - name_type: u1
 #   - length: u2
 #   - host_name: size length
 server_name_fmt = {
-    "name_type": u1,
-    "host_name": types.Sized(length=u2, fmt=types.Bytes()),
+    "name_type": types.u8,
+    "host_name": types.Sized(length=types.u16, fmt=types.Bytes()),
 }
 
 # sni:
 #   - list_length: u2
 #   - server_names: repeat eos
-sni_fmt = types.Sized(length=u2, fmt=types.array(server_name_fmt))
+sni_fmt = types.Sized(length=types.u16, fmt=types.array(server_name_fmt))
 
 # protocol:
 #   - strlen: u1
 #   - name: size strlen
-protocol_fmt = types.Sized(length=u1, fmt=types.Bytes())
+protocol_fmt = types.Sized(length=types.u8, fmt=types.Bytes())
 
 # alpn:
 #   - ext_len: u2
 #   - alpn_protocols: repeat eos
-alpn_fmt = types.Sized(length=u2, fmt=types.array(protocol_fmt))
+alpn_fmt = types.Sized(length=types.u16, fmt=types.array(protocol_fmt))
 
 # Extension type constants
 EXT_SNI = 0x0000
@@ -79,9 +74,9 @@ EXT_ALPN = 0x0010
 #   - len: u2
 #   - body: size len (parsed based on type)
 extension_fmt = {
-    "type": u2,
+    "type": types.u16,
     "body": types.Sized(
-        length=u2,
+        length=types.u16,
         fmt=types.Switch(
             key=types.Ref("type"),  # backward reference to sibling "type" field
             cases={
@@ -96,7 +91,7 @@ extension_fmt = {
 # extensions:
 #   - len: u2
 #   - extensions: repeat eos
-extensions_fmt = types.Sized(length=u2, fmt=types.array(extension_fmt))
+extensions_fmt = types.Sized(length=types.u16, fmt=types.array(extension_fmt))
 
 # Full TLS Client Hello format
 tls_client_hello_fmt = {

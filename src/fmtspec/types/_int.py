@@ -21,21 +21,23 @@ class Int:
     byteorder: Literal["little", "big"]
     signed: bool
     size: Literal[1, 2, 4, 8]
-    prefix_struct: Struct = field(init=False, repr=False, compare=False)
+    _struct: Struct = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         endian = ">" if self.byteorder == "big" else "<"
         key = (self.size, self.signed)
-        object.__setattr__(self, "prefix_struct", Struct(f"{endian}{SIZE_MAP[key]}"))
+        object.__setattr__(self, "_struct", Struct(f"{endian}{SIZE_MAP[key]}"))
 
     def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
-        stream.write(self.prefix_struct.pack(value))
+        # FUTURE: use the pack_into method for efficiency?
+        stream.write(self._struct.pack(value))
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
         raw = stream.read(self.size)
         if len(raw) < self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(raw)}")
-        return self.prefix_struct.unpack(raw)[0]
+        # FUTURE: use the unpack_from method for efficiency?
+        return self._struct.unpack(raw)[0]
 
 
 # big endian variants (shorthand names)
