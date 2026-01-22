@@ -28,8 +28,6 @@ from ._literal import Null as Null
 from ._optional import Optional as Optional
 from ._sized import Sized as Sized
 
-# FUTURE: remove this PrefixString
-from ._str import PrefixedStr as PrefixedStr
 from ._str import String as String
 from ._switch import Switch as Switch
 from ._tagged import RangeDecoder as RangeDecoder

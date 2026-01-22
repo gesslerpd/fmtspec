@@ -63,9 +63,9 @@ f32 = types.Float(byteorder="big", size=4)
 f64 = types.Float(byteorder="big", size=8)
 
 # Length-prefixed string/binary body formats (after the tag)
-str8 = types.PrefixedStr(prefix_fmt=u8)
-str16 = types.PrefixedStr(prefix_fmt=u16)
-str32 = types.PrefixedStr(prefix_fmt=u32)
+str8 = types.Sized(length=u8, fmt=types.String())
+str16 = types.Sized(length=u16, fmt=types.String())
+str32 = types.Sized(length=u32, fmt=types.String())
 bin8 = types.Sized(length=u8, fmt=types.Bytes())
 bin16 = types.Sized(length=u16, fmt=types.Bytes())
 bin32 = types.Sized(length=u32, fmt=types.Bytes())
@@ -124,7 +124,7 @@ def _encode_int(value: int, stream: BinaryIO) -> None:
         raise OverflowError(f"Integer {value} out of msgpack range")
 
 
-def _encode_str(value: str, stream: BinaryIO) -> None:
+def _encode_str(value: str, stream: BinaryIO, context) -> None:
     """Encode string using smallest representation."""
     data = value.encode("utf-8")
     n = len(data)
@@ -134,13 +134,13 @@ def _encode_str(value: str, stream: BinaryIO) -> None:
         stream.write(data)
     elif n <= 0xFF:
         stream.write(b"\xd9")
-        str8.encode(value, stream)
+        str8.encode(value, stream, context=context)
     elif n <= 0xFFFF:
         stream.write(b"\xda")
-        str16.encode(value, stream)
+        str16.encode(value, stream, context=context)
     else:
         stream.write(b"\xdb")
-        str32.encode(value, stream)
+        str32.encode(value, stream, context=context)
 
 
 def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
@@ -188,14 +188,14 @@ def _decode_sint(stream: BinaryIO, tag: int) -> int:
     return result
 
 
-def _decode_str_tagged(stream: BinaryIO, tag: int) -> str:
+def _decode_str_tagged(stream: BinaryIO, tag: int, context) -> str:
     """Decode string by tag."""
     if tag == STR8:
-        result = str8.decode(stream)
+        result = str8.decode(stream, context=context)
     elif tag == STR16:
-        result = str16.decode(stream)
+        result = str16.decode(stream, context=context)
     else:
-        result = str32.decode(stream)
+        result = str32.decode(stream, context=context)
     return result
 
 
@@ -246,7 +246,7 @@ class MsgPack:
             stream.write(b"\xcb")
             f64.encode(value, stream)
         elif t is str:
-            _encode_str(value, stream)
+            _encode_str(value, stream, context)
         elif t is bytes or t is bytearray or t is memoryview:
             _encode_bin(bytes(value), stream, context)
         elif t is list or t is tuple:
@@ -324,7 +324,7 @@ class MsgPack:
         elif 0xD0 <= tag <= 0xD3:
             result = _decode_sint(stream, tag)
         elif STR8 <= tag <= STR32:
-            result = _decode_str_tagged(stream, tag)
+            result = _decode_str_tagged(stream, tag, context)
         elif ARRAY16 <= tag <= ARRAY32:
             result = _decode_array_tagged(stream, tag, context)
         elif MAP16 <= tag <= MAP32:
