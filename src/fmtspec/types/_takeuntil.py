@@ -10,7 +10,7 @@ from .._protocol import Type
 class TakeUntil:
     """Generic take-until format: either terminated by bytes or length-prefixed.
 
-    Exactly one of `terminator` or `prefix_fmt` must be provided.
+    Exactly one of `terminator` or `max_size` must be provided.
     Returns `str` by default (decoded with `encoding`) unless `as_bytes` is True.
     """
 

@@ -3,8 +3,6 @@ from ._array import array as array
 from ._bitfield import Bitfields as Bitfields, Bitfield as Bitfield
 from ._bytes import Bytes as Bytes
 from ._constants import Endian as Endian
-from ._counted import CountPrefixedArray as CountPrefixedArray
-from ._counted import CountPrefixedMap as CountPrefixedMap
 from ._float import Float as Float
 from ._int import Int as Int
 

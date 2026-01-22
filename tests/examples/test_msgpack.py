@@ -60,10 +60,10 @@ bin32 = types.Sized(length=types.u32, fmt=types.Bytes())
 msgpack_ref = types.Lazy(lambda: msgpack)
 
 # Count-prefixed arrays/maps (after the tag)
-array16 = types.CountPrefixedArray(byteorder="big", prefix_size=2, element_fmt=msgpack_ref)
-array32 = types.CountPrefixedArray(byteorder="big", prefix_size=4, element_fmt=msgpack_ref)
-map16 = types.CountPrefixedMap(byteorder="big", prefix_size=2, element_fmt=msgpack_ref)
-map32 = types.CountPrefixedMap(byteorder="big", prefix_size=4, element_fmt=msgpack_ref)
+array16 = types.Array(msgpack_ref, dims=(types.u16,))
+array32 = types.Array(msgpack_ref, dims=(types.u32,))
+map16 = types.Array((msgpack_ref, msgpack_ref), dims=(types.u16,))
+map32 = types.Array((msgpack_ref, msgpack_ref), dims=(types.u32,))
 
 
 # =============================================================================
@@ -211,7 +211,7 @@ def _decode_map_tagged(stream: BinaryIO, tag: int, context: Context) -> dict:
         result = map16.decode(stream, context=context)
     else:
         result = map32.decode(stream, context=context)
-    return result
+    return dict(result)
 
 
 class MsgPack:
@@ -264,10 +264,10 @@ class MsgPack:
                 self.encode(v, stream, context=context)
         elif n <= 0xFFFF:
             stream.write(b"\xde")
-            map16.encode(value, stream, context=context)
+            map16.encode(value.items(), stream, context=context)
         else:
             stream.write(b"\xdf")
-            map32.encode(value, stream, context=context)
+            map32.encode(value.items(), stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode a MessagePack value from stream."""

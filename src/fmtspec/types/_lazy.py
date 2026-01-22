@@ -27,10 +27,8 @@ class Lazy:
 
         # Use Lazy to defer resolution
         array_elements = Lazy(lambda: msgpack)
-        array16 = CountPrefixedArray(
-            byteorder="big",
-            prefix_size=2,
-            element_fmt=array_elements,
+        array16 = Array(
+            array_elements, dims=(u16,)
         )
 
         # Now define the actual type
