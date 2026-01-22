@@ -1,5 +1,4 @@
 from ._array import Array as Array
-from ._array import PrefixedArray as PrefixedArray
 from ._array import array as array
 from ._bitfield import Bitfields as Bitfields, Bitfield as Bitfield
 from ._bytes import Bytes as Bytes

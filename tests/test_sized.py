@@ -34,7 +34,7 @@ def test_terminated_string_size_is_none() -> None:
 def test_prefixed_array_size_is_none() -> None:
     """PrefixedArray is variable-size, so size should be None."""
     u2 = types.Int(byteorder="big", signed=False, size=2)
-    assert types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=u2).size is ...
+    assert types.Array(element_fmt=u2, dims=(u2,)).size is ...
 
 
 def test_switch_size_is_none() -> None:

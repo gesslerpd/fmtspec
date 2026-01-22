@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from .._stream import _decode_stream, _encode_stream
 from .._utils import sizeof
@@ -12,48 +11,8 @@ from ._ref import Ref
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from types import EllipsisType
 
-    from .._protocol import Context, Format, Size
-
-
-@dataclass(frozen=True, slots=True)
-class PrefixedArray:
-    """Length-prefixed array type.
-
-    The length prefix indicates the total byte size of all elements.
-    Elements are decoded until the byte budget is exhausted.
-    """
-
-    # class variables
-    size: ClassVar[EllipsisType] = ...
-
-    # fields
-    byteorder: Literal["little", "big"]
-    prefix_size: Literal[1, 2, 4, 8]
-    element_fmt: Format
-
-    def encode(self, value: list[Any], stream: BinaryIO, *, context: Context) -> None:
-        buffer = BytesIO()
-        for elem in value:
-            _encode_stream(elem, self.element_fmt, buffer, context=context)
-        encoded_elements = buffer.getvalue()
-        length = len(encoded_elements)
-        prefix = length.to_bytes(self.prefix_size, self.byteorder, signed=False)
-        stream.write(prefix + encoded_elements)
-
-    def decode(self, stream: BinaryIO, *, context: Context) -> list[Any]:
-        prefix = stream.read(self.prefix_size)
-        length = int.from_bytes(prefix, self.byteorder, signed=False)
-        element_data = stream.read(length)
-
-        inner_stream = BytesIO(element_data)
-        result = []
-        while inner_stream.tell() < length:
-            elem, _ = _decode_stream(inner_stream, self.element_fmt, context=context)
-            result.append(elem)
-
-        return result
+    from .._protocol import Context, Format, Size, Type
 
 
 # FUTURE: simple array helper, need a format `class Array: ...` later
@@ -69,7 +28,7 @@ class Array:
     # dims may be static ints or string keys looked up from the current
     # parent context (e.g., sibling field names). When any dimension is a
     # context key the overall array size is dynamic (`...`).
-    dims: tuple[int | Ref, ...]
+    dims: tuple[int | Ref | Type, ...]
 
     # post-init public
     size: Size = field(init=False)
@@ -79,9 +38,9 @@ class Array:
     def __post_init__(self) -> None:
         dims = self.dims
         ddims = False
+        # empty-tuple dimension `()` means greedy: repeat until end of stream
+        greedy = not dims
         sdims: list[int] = []
-        if not dims:
-            raise ValueError("Array dimensions must be non-empty.")
 
         # validate static integer dims; string dims are resolved at runtime
         for d in dims:
@@ -95,8 +54,10 @@ class Array:
         # If element size or any dimension is dynamic, mark overall size
         # as dynamic (`...`). Only compute a concrete size when element
         # size is an int and all dims are ints.
-        if ddims:
-            size: Size = ...
+        if greedy:
+            size: Size = None
+        elif ddims:
+            size = ...
         else:
             # try to compute fixed size if element_fmt exposes a concrete `size`
             elem_size = sizeof(self.element_fmt)
@@ -118,9 +79,15 @@ class Array:
         # resolve the expected length for this dimension from context when
         # a string key was provided
         dim_def = dims[idx]
-        e_len = dim_def if isinstance(dim_def, int) else dim_def.resolve(context)
+        if isinstance(dim_def, int):
+            e_len = dim_def
+        elif isinstance(dim_def, Ref):
+            e_len = dim_def.resolve(context)
+        else:
+            e_len = None
+            dim_def.encode(len(v), stream, context=context)
 
-        if len(v) != e_len:
+        if e_len is not None and len(v) != e_len:
             dim_mismatch = f"Dimension mismatch: expected dims[{idx}]={e_len}, got {len(v)}."
             raise ValueError(dim_mismatch)
 
@@ -132,6 +99,12 @@ class Array:
                 self._encode_level(stream, sub, idx + 1, context)
 
     def encode(self, value: list[Any], stream: BinaryIO, *, context: Context) -> None:
+        # Support greedy (no-dims) arrays: stream elements until exhaustion
+        if not self.dims:
+            for elem in value:
+                _encode_stream(elem, self.element_fmt, stream, context=context)
+            return
+
         self._encode_level(stream, value, 0, context=context)
 
     def _decode_level(self, stream, idx: int, context: Context) -> list[Any]:
@@ -139,7 +112,12 @@ class Array:
         elem_fmt = self.element_fmt
 
         dim_def = dims[idx]
-        count = dim_def if isinstance(dim_def, int) else dim_def.resolve(context)
+        if isinstance(dim_def, int):
+            count = dim_def
+        elif isinstance(dim_def, Ref):
+            count = dim_def.resolve(context)
+        else:
+            count = dim_def.decode(stream, context=context)
 
         if idx == len(dims) - 1:
             return [_decode_stream(stream, elem_fmt, context=context)[0] for _ in range(count)]
@@ -147,10 +125,40 @@ class Array:
             return [self._decode_level(stream, idx + 1, context) for _ in range(count)]
 
     def decode(self, stream: BinaryIO, *, context: Context) -> list[Any]:
+        # Support greedy (no-dims) arrays: read elements until exhaustion
+        if not self.dims:
+            return self._decode_greedy(stream, self.element_fmt, context)
+
         return self._decode_level(stream, 0, context)
 
+    def _decode_greedy(self, stream: BinaryIO, elem_fmt: Any, context: Context) -> list[Any]:
+        elem_size = sizeof(elem_fmt)
 
-def array(fmt: Format, dims: int | Ref | Iterable[int | Ref]) -> Array:
+        if hasattr(stream, "getbuffer"):
+            remaining = len(stream.getbuffer()) - stream.tell()
+        else:
+            cur = stream.tell()
+            end = stream.seek(0, 2)
+            stream.seek(cur)
+            remaining = end - cur
+
+        # If element has fixed size and remaining bytes known, compute count
+        if isinstance(elem_size, int):
+            count = remaining // elem_size
+            return [_decode_stream(stream, elem_fmt, context=context)[0] for _ in range(count)]
+
+        # Otherwise, decode in a loop until decoding fails (stream exhausted)
+        items: list[Any] = []
+        while True:
+            try:
+                v, _ = _decode_stream(stream, elem_fmt, context=context)
+                items.append(v)
+            except Exception:
+                break
+        return items
+
+
+def array(fmt: Format, dims: int | Ref | Iterable[int | Ref] = ()) -> Array:
     """Helper that returns an `Array` instance for the given element format
     and dimensions. Mirrors the old helper but produces an efficient `Array`.
     """

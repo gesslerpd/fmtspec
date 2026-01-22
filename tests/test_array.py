@@ -74,13 +74,13 @@ def test_array_invalid_dims_raises():
 
 def test_prefixed_array_roundtrip():
     u16 = types.u16be
-    p = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=u16)
+    p = types.Array(element_fmt=u16, dims=(u16,))
 
     obj = [10, 20, 30]
     data = encode(obj, p)
 
     # prefix (2 bytes) + three u16 values
-    assert data == b"\x00\x06\x00\n\x00\x14\x00\x1e"
+    assert data == b"\x00\x03\x00\n\x00\x14\x00\x1e"
 
     res = decode(data, p)
     assert res == obj
@@ -91,7 +91,7 @@ def test_size_attribute_various():
     arr = types.array(u16, (3, 2))
     assert arr.size == 12
 
-    p = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=u16)
+    p = types.Array(element_fmt=u16, dims=(u16,))
     assert p.size is ...
 
     arr2 = types.array(p, (2, 2))
@@ -140,6 +140,25 @@ def test_array_mixed_dims_roundtrip():
 
     res = decode(data, fmt)
     assert res == obj
+
+
+def test_greedy_array_roundtrip():
+    u16 = types.u16be
+    arr = types.array(u16, ())
+
+    obj = [10, 20, 30]
+    data = encode(obj, arr)
+
+    assert data == b"\x00\n\x00\x14\x00\x1e"
+
+    res = decode(data, arr)
+    assert res == obj
+
+
+def test_greedy_array_size_is_none():
+    u8 = types.u8be
+    arr = types.array(u8, ())
+    assert arr.size is None
 
 
 def test_array_mixed_dims_wrong_shape_raises():

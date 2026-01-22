@@ -38,7 +38,8 @@ session_id_fmt = types.Sized(length=u1, fmt=types.Bytes())
 #   - len: u2
 #   - cipher_suites: u2 repeat (len/2 times)
 # Note: The len is byte length, and each cipher suite is 2 bytes
-cipher_suites_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=u2)
+cipher_suites_fmt = types.Sized(length=u2, fmt=types.array(u2))
+
 
 # compression_methods:
 #   - len: u1
@@ -57,7 +58,7 @@ server_name_fmt = {
 # sni:
 #   - list_length: u2
 #   - server_names: repeat eos
-sni_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=server_name_fmt)
+sni_fmt = types.Sized(length=u2, fmt=types.array(server_name_fmt))
 
 # protocol:
 #   - strlen: u1
@@ -67,7 +68,7 @@ protocol_fmt = types.Sized(length=u1, fmt=types.Bytes())
 # alpn:
 #   - ext_len: u2
 #   - alpn_protocols: repeat eos
-alpn_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=protocol_fmt)
+alpn_fmt = types.Sized(length=u2, fmt=types.array(protocol_fmt))
 
 # Extension type constants
 EXT_SNI = 0x0000
@@ -94,7 +95,7 @@ extension_fmt = {
 # extensions:
 #   - len: u2
 #   - extensions: repeat eos
-extensions_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=extension_fmt)
+extensions_fmt = types.Sized(length=u2, fmt=types.array(extension_fmt))
 
 # Full TLS Client Hello format
 tls_client_hello_fmt = {
