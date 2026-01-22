@@ -28,3 +28,12 @@ class Float:
     def decode(self, stream: BinaryIO, **_: Any) -> float:
         raw = stream.read(self.size)
         return self._struct.unpack(raw)[0]
+
+
+# big endian variants (shorthand names)
+f32 = f32be = Float(byteorder="big", size=4)
+f64 = f64be = Float(byteorder="big", size=8)
+
+# little endian variants
+f32le = Float(byteorder="little", size=4)
+f64le = Float(byteorder="little", size=8)

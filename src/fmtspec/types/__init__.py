@@ -8,6 +8,7 @@ from ._counted import CountPrefixedMap as CountPrefixedMap
 from ._float import Float as Float
 from ._int import Int as Int
 
+# int variants
 # all "u8" variants are the same (export for consistency)
 
 # big endian variants (shorthand)
@@ -21,6 +22,17 @@ from ._int import i8be as i8be, i16be as i16be, i32be as i32be, i64be as i64be
 # little endian variants
 from ._int import u8le as u8le, u16le as u16le, u32le as u32le, u64le as u64le
 from ._int import i8le as i8le, i16le as i16le, i32le as i32le, i64le as i64le
+
+# float variants
+
+# big endian variants (shorthand names)
+from ._float import f32 as f32, f64 as f64
+
+# big endian variants
+from ._float import f32be as f32be, f64be as f64be
+
+# little endian variants
+from ._float import f32le as f32le, f64le as f64le
 
 from ._lazy import Lazy as Lazy
 from ._literal import Literal as Literal

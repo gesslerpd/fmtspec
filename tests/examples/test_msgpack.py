@@ -48,27 +48,13 @@ MAP32 = 0xDF
 # Primitive Type Instances (composed from fmtspec.types)
 # =============================================================================
 
-# Integer types (big-endian, as per msgpack spec)
-u8 = types.Int(byteorder="big", signed=False, size=1)
-u16 = types.Int(byteorder="big", signed=False, size=2)
-u32 = types.Int(byteorder="big", signed=False, size=4)
-u64 = types.Int(byteorder="big", signed=False, size=8)
-i8 = types.Int(byteorder="big", signed=True, size=1)
-i16 = types.Int(byteorder="big", signed=True, size=2)
-i32 = types.Int(byteorder="big", signed=True, size=4)
-i64 = types.Int(byteorder="big", signed=True, size=8)
-
-# Float types
-f32 = types.Float(byteorder="big", size=4)
-f64 = types.Float(byteorder="big", size=8)
-
 # Length-prefixed string/binary body formats (after the tag)
-str8 = types.Sized(length=u8, fmt=types.String())
-str16 = types.Sized(length=u16, fmt=types.String())
-str32 = types.Sized(length=u32, fmt=types.String())
-bin8 = types.Sized(length=u8, fmt=types.Bytes())
-bin16 = types.Sized(length=u16, fmt=types.Bytes())
-bin32 = types.Sized(length=u32, fmt=types.Bytes())
+str8 = types.Sized(length=types.u8, fmt=types.String())
+str16 = types.Sized(length=types.u16, fmt=types.String())
+str32 = types.Sized(length=types.u32, fmt=types.String())
+bin8 = types.Sized(length=types.u8, fmt=types.Bytes())
+bin16 = types.Sized(length=types.u16, fmt=types.Bytes())
+bin32 = types.Sized(length=types.u32, fmt=types.Bytes())
 
 # Self-referential format using Lazy
 msgpack_ref = types.Lazy(lambda: msgpack)
@@ -95,31 +81,31 @@ def _encode_int(value: int, stream: BinaryIO) -> None:
     # 2-byte encodings
     elif 0x80 <= value <= 0xFF:
         stream.write(b"\xcc")
-        u8.encode(value, stream)
+        types.u8.encode(value, stream)
     elif -0x80 <= value < -0x20:
         stream.write(b"\xd0")
-        i8.encode(value, stream)
+        types.i8.encode(value, stream)
     # 3-byte encodings
     elif 0x100 <= value <= 0xFFFF:
         stream.write(b"\xcd")
-        u16.encode(value, stream)
+        types.u16.encode(value, stream)
     elif -0x8000 <= value < -0x80:
         stream.write(b"\xd1")
-        i16.encode(value, stream)
+        types.i16.encode(value, stream)
     # 5-byte encodings
     elif 0x10000 <= value <= 0xFFFFFFFF:
         stream.write(b"\xce")
-        u32.encode(value, stream)
+        types.u32.encode(value, stream)
     elif -0x80000000 <= value < -0x8000:
         stream.write(b"\xd2")
-        i32.encode(value, stream)
+        types.i32.encode(value, stream)
     # 9-byte encodings
     elif 0x100000000 <= value <= 0xFFFFFFFFFFFFFFFF:
         stream.write(b"\xcf")
-        u64.encode(value, stream)
+        types.u64.encode(value, stream)
     elif -0x8000000000000000 <= value < -0x80000000:
         stream.write(b"\xd3")
-        i64.encode(value, stream)
+        types.i64.encode(value, stream)
     else:
         raise OverflowError(f"Integer {value} out of msgpack range")
 
@@ -165,26 +151,26 @@ def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
 def _decode_uint(stream: BinaryIO, tag: int) -> int:
     """Decode unsigned integer by tag."""
     if tag == 0xCC:
-        result = u8.decode(stream)
+        result = types.u8.decode(stream)
     elif tag == 0xCD:
-        result = u16.decode(stream)
+        result = types.u16.decode(stream)
     elif tag == 0xCE:
-        result = u32.decode(stream)
+        result = types.u32.decode(stream)
     else:
-        result = u64.decode(stream)
+        result = types.u64.decode(stream)
     return result
 
 
 def _decode_sint(stream: BinaryIO, tag: int) -> int:
     """Decode signed integer by tag."""
     if tag == 0xD0:
-        result = i8.decode(stream)
+        result = types.i8.decode(stream)
     elif tag == 0xD1:
-        result = i16.decode(stream)
+        result = types.i16.decode(stream)
     elif tag == 0xD2:
-        result = i32.decode(stream)
+        result = types.i32.decode(stream)
     else:
-        result = i64.decode(stream)
+        result = types.i64.decode(stream)
     return result
 
 
@@ -244,7 +230,7 @@ class MsgPack:
             _encode_int(value, stream)
         elif t is float:
             stream.write(b"\xcb")
-            f64.encode(value, stream)
+            types.f64.encode(value, stream)
         elif t is str:
             _encode_str(value, stream, context)
         elif t is bytes or t is bytearray or t is memoryview:
@@ -316,9 +302,9 @@ class MsgPack:
         elif BIN8 <= tag <= BIN32:
             result = _decode_bin_tagged(stream, tag, context)
         elif tag == FLOAT32:
-            result = f32.decode(stream)
+            result = types.f32.decode(stream)
         elif tag == FLOAT64:
-            result = f64.decode(stream)
+            result = types.f64.decode(stream)
         elif 0xCC <= tag <= 0xCF:
             result = _decode_uint(stream, tag)
         elif 0xD0 <= tag <= 0xD3:
