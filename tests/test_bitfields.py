@@ -320,16 +320,17 @@ def test_bitfield_mixed():
 def test_bitfield_align_starts_sized_group():
     fmt = {
         "head": u16,
-        "a": Bitfield(bits=4, align=2),
+        "a": Bitfield(bits=4, align=8),
         "b": Bitfield(bits=4),
+        "c": Bitfield(bits=8, align=1),
+        "d": Bitfield(bits=4, align=1),
         "tail": u16,
     }
 
-    obj = {"head": 0x1234, "a": 0xA, "b": 0xB, "tail": 0x5678}
-
+    obj = {"head": 0x1234, "a": 0xA, "b": 0xB, "c": 1, "d": 0x1, "tail": 0x5678}
     data = encode(obj, fmt)
 
-    assert data == b"\x12\x34\x00\xba\x56\x78"
+    assert data == b"\x12\x34\x00\x00\x00\x00\x00\x00\x00\xba\x01\x01\x56\x78"
 
     result = decode(data, fmt)
     assert result == obj
@@ -358,21 +359,30 @@ def test_bitfields_align_direct():
 def test_bitfields_multi_align_direct():
     bf = Bitfields(
         fields={
-            "a": Bitfield(bits=9),  # requires 2 bytes
-            "b": Bitfield(bits=4, align=2),  # forces 2 bytes
+            "a": Bitfield(bits=9, align=8),
+            "b": Bitfield(bits=4, offset=16),
             "c": Bitfield(bits=4),
-            "d": Bitfield(bits=5, align=2),  # forces 2 bytes
-            "e": Bitfield(bits=11),
         }
     )
 
-    # real size is 6 but forced to next highest align of 8
+    # real size is 4 but forced to align of 8
     assert bf.size == 8
 
-    obj = {"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
+    obj = {"a": 0b1, "b": 0b1, "c": 0b1}
     data = encode(obj, bf)
 
-    assert data == b""
+    assert data == bytes(
+        [
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00000000,
+            0b00010001,
+            0b00000000,
+            0b00000001,
+        ]
+    )
 
     result = decode(data, bf)
     assert result == obj

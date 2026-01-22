@@ -37,22 +37,36 @@ class Bitfields:
 
     def __post_init__(self) -> None:  # noqa: PLR0912, PLR0915
         if not self.size:
-            # Simplified pass: convert to a list and scan by index. Maintain
-            # `running_bits` for sequential offset-less fields and
-            # `max_offset_bits` for explicit offsets; take the max at end.
+            # Minimal bit accounting: walk fields in order, tracking the
+            # running bit position for auto-placed groups and the maximum
+            # required bits from explicit offsets. Grouping rules are the
+            # same as before (align applies to a contiguous run).
             fields = list(self.fields.values())
             n = len(fields)
             i = 0
-            total_bits = 0
+            running_bits = 0
+            max_bits = 0
 
             while i < n:
                 bf = fields[i]
                 if bf.offset:
-                    total_bits = bf.offset + bf.bits
+                    # Preserve any previously-reserved bits (e.g. from a
+                    # forced align group) while resuming auto-placement at
+                    # the explicit offset end.
+                    prev_running = running_bits
+                    running_bits = bf.offset + bf.bits
+                    max_bits = max(max_bits, prev_running, running_bits)
                     i += 1
                     continue
 
                 if bf.align is not None:
+                    # Only allow `align` on the first field of a contiguous
+                    # auto-placement group.
+                    if i > 0 and not fields[i - 1].offset and fields[i - 1].align is None:
+                        raise ValueError(
+                            "Bitfield align is only allowed on the first field of a group"
+                        )
+
                     forced_bits = bf.align * 8
                     group_bits = bf.bits
                     j = i + 1
@@ -61,7 +75,7 @@ class Bitfields:
                         j += 1
                     if group_bits > forced_bits:
                         raise ValueError("Bitfield exceeds forced align group size")
-                    total_bits += forced_bits
+                    running_bits += forced_bits
                     i = j
                     continue
 
@@ -71,9 +85,10 @@ class Bitfields:
                 while j < n and not fields[j].offset and fields[j].align is None:
                     group_bits += fields[j].bits
                     j += 1
-                total_bits += group_bits
+                running_bits += group_bits
                 i = j
 
+            total_bits = max(max_bits, running_bits)
             size = 1
             while total_bits > size * 8:
                 size *= 2
