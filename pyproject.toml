@@ -1,0 +1,23 @@
+[project]
+name = "fmtspec"
+version = "0.1.0"
+description = "A flexible binary format serialization library for Python"
+readme = "README.md"
+authors = [
+    { name = "Peter Gessler", email = "gesslerpd@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "msgspec>=0.20.0",
+]
+
+[build-system]
+requires = ["uv-build>=0.9.26"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.13",
+]

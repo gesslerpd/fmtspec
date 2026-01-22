@@ -1,0 +1,38 @@
+
+line-length = 100
+fix = true
+
+[lint]
+typing-extensions = false
+select = [
+    "RUF",
+    "I",
+    "N",
+    "A",
+    "F",
+    "UP",
+    "FURB",
+    "PL",
+    "ARG",
+    "COM",
+    "PT",
+    "FA",
+    "TC",   # typing
+]
+
+ignore = [
+    "COM812", # causes conflicts with formatting
+]
+
+[lint.pylint]
+max-returns = 3
+
+[lint.per-file-ignores]
+# public API export files
+"src/**/__init__.py" = [
+    "I001", # don't sort imports
+]
+# tests
+"tests/**/test_*.py" = [
+    "PLR2004", # magic numbers are fine in tests
+]
