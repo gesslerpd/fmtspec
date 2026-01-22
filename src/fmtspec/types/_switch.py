@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 from .._stream import _decode_stream, _encode_stream
 
@@ -38,8 +38,6 @@ class Switch:
     key: Ref
     cases: dict[Any, Format]
     default: Format | None = None
-    byteorder: Literal["little", "big"] = "big"
-    prefix_size: Literal[1, 2, 4, 8] = 2
 
     def _get_format(self, key_value: Any) -> Format | None:
         return self.cases.get(key_value, self.default)
@@ -48,25 +46,14 @@ class Switch:
         """Encode value using format selected by context[key]."""
         key_value = self.key.resolve(context)
         fmt = self._get_format(key_value)
-
         if fmt is None:
-            length = len(value)
-            prefix = length.to_bytes(self.prefix_size, self.byteorder, signed=False)
-            stream.write(prefix + value)
+            stream.write(value)
         else:
-            buffer = BytesIO()
-            _encode_stream(value, fmt, buffer, context=context)
-            encoded = buffer.getvalue()
-            length = len(encoded)
-            prefix = length.to_bytes(self.prefix_size, self.byteorder, signed=False)
-            stream.write(prefix + encoded)
+            _encode_stream(value, fmt, stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode data using format selected by context[key]."""
-        prefix = stream.read(self.prefix_size)
-        length = int.from_bytes(prefix, self.byteorder, signed=False)
-        inner_data = stream.read(length)
-
+        inner_data = stream.read()
         key_value = self.key.resolve(context)
         fmt = self._get_format(key_value)
 

@@ -16,12 +16,11 @@ def test_decode_known_case() -> None:
         "body": types.Switch(
             key=types.Ref("type"),
             cases={1: inner_fmt},
-            prefix_size=2,
         ),
     }
 
-    # type=1, length=2, then 2 bytes for inner format
-    data = b"\x00\x01\x00\x02\x0a\x14"
+    # type=1, then 2 bytes for inner format
+    data = b"\x00\x01\x0a\x14"
     result = decode(data, fmt)
 
     assert result == {"type": 1, "body": {"a": 10, "b": 20}}
@@ -37,12 +36,11 @@ def test_decode_unknown_case_returns_raw_bytes() -> None:
             key=types.Ref("type"),
             cases={1: {"x": u2}},
             default=None,
-            prefix_size=2,
         ),
     }
 
-    # type=99 (unknown), length=4, then 4 raw bytes
-    data = b"\x00\x63\x00\x04\xde\xad\xbe\xef"
+    # type=99 (unknown), then 4 raw bytes
+    data = b"\x00\x63\xde\xad\xbe\xef"
     result = decode(data, fmt)
 
     assert result == {"type": 99, "body": b"\xde\xad\xbe\xef"}
@@ -59,15 +57,14 @@ def test_encode_known_case() -> None:
         "body": types.Switch(
             key=types.Ref("type"),
             cases={1: inner_fmt},
-            prefix_size=2,
         ),
     }
 
     obj = {"type": 1, "body": {"a": 10, "b": 20}}
     data = encode(obj, fmt)
 
-    # type=1, length=2, then encoded inner
-    assert data == b"\x00\x01\x00\x02\x0a\x14"
+    # type=1, then encoded inner
+    assert data == b"\x00\x01\x0a\x14"
 
 
 def test_encode_unknown_case_raw_bytes() -> None:
@@ -80,15 +77,14 @@ def test_encode_unknown_case_raw_bytes() -> None:
             key=types.Ref("type"),
             cases={1: {"x": u2}},
             default=None,
-            prefix_size=2,
         ),
     }
 
     obj = {"type": 99, "body": b"\xde\xad\xbe\xef"}
     data = encode(obj, fmt)
 
-    # type=99, length=4, then raw bytes
-    assert data == b"\x00\x63\x00\x04\xde\xad\xbe\xef"
+    # type=99, then raw bytes
+    assert data == b"\x00\x63\xde\xad\xbe\xef"
 
 
 def test_roundtrip() -> None:
@@ -104,7 +100,6 @@ def test_roundtrip() -> None:
                 1: {"a": u1, "b": u1},
                 2: {"x": u2, "y": u2},
             },
-            prefix_size=2,
         ),
     }
 
@@ -124,11 +119,10 @@ def test_decode_missing_key_raises() -> None:
         "body": types.Switch(
             key=types.Ref("wrong_key"),
             cases={1: {"x": u2}},
-            prefix_size=2,
         ),
     }
 
-    # type=1, length=2, data
+    # type=1, data
     data = b"\x00\x01\x00\x02\x00\x05"
 
     with pytest.raises(DecodeError, match="wrong_key") as exc_info:
@@ -146,7 +140,6 @@ def test_encode_missing_key_raises() -> None:
         "body": types.Switch(
             key=types.Ref("wrong_key"),
             cases={1: {"x": u2}},
-            prefix_size=2,
         ),
     }
 
@@ -167,16 +160,14 @@ def test_little_endian_prefix() -> None:
         "body": types.Switch(
             key=types.Ref("type"),
             cases={},
-            byteorder="little",
-            prefix_size=2,
         ),
     }
 
     obj = {"type": 1, "body": b"\x01\x02\x03"}
     data = encode(obj, fmt)
 
-    # type=1 (big), length=3 (little: 0x03 0x00), then data
-    assert data == b"\x00\x01\x03\x00\x01\x02\x03"
+    # type=1 (big), then data
+    assert data == b"\x00\x01\x01\x02\x03"
 
     result = decode(data, fmt)
     assert result == obj
@@ -189,16 +180,16 @@ def test_different_prefix_sizes() -> None:
     # Test with 1-byte prefix
     fmt1 = {
         "type": u1,
-        "body": types.Switch(key=types.Ref("type"), cases={}, prefix_size=1),
+        "body": types.Switch(key=types.Ref("type"), cases={}),
     }
     obj = {"type": 1, "body": b"\xaa\xbb"}
     data1 = encode(obj, fmt1)
-    assert data1 == b"\x01\x02\xaa\xbb"  # type=1, len=2 (1 byte), data
+    assert data1 == b"\x01\xaa\xbb"  # type=1, len=2 (1 byte), data
 
     # Test with 4-byte prefix
     fmt4 = {
         "type": u1,
-        "body": types.Switch(key=types.Ref("type"), cases={}, prefix_size=4),
+        "body": types.Switch(key=types.Ref("type"), cases={}),
     }
     data4 = encode(obj, fmt4)
-    assert data4 == b"\x01\x00\x00\x00\x02\xaa\xbb"  # type=1, len=2 (4 bytes), data
+    assert data4 == b"\x01\xaa\xbb"  # type=1, len=2 (4 bytes), data

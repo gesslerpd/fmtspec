@@ -80,15 +80,16 @@ EXT_ALPN = 0x0010
 #   - body: size len (parsed based on type)
 extension_fmt = {
     "type": u2,
-    "body": types.Switch(
-        key=types.Ref("type"),  # backward reference to sibling "type" field
-        cases={
-            EXT_SNI: sni_fmt,
-            EXT_ALPN: alpn_fmt,
-        },
-        default=None,  # Unknown extensions return raw bytes
-        byteorder="big",
-        prefix_size=2,
+    "body": types.Sized(
+        length=u2,
+        fmt=types.Switch(
+            key=types.Ref("type"),  # backward reference to sibling "type" field
+            cases={
+                EXT_SNI: sni_fmt,
+                EXT_ALPN: alpn_fmt,
+            },
+            default=None,  # Unknown extensions return raw bytes
+        ),
     ),
 }
 
