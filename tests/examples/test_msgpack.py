@@ -60,11 +60,10 @@ bin32 = types.Sized(length=types.u32, fmt=types.Bytes())
 msgpack_ref = types.Lazy(lambda: msgpack)
 
 # Count-prefixed arrays/maps (after the tag)
-array16 = types.Array(msgpack_ref, dims=(types.u16,))
-array32 = types.Array(msgpack_ref, dims=(types.u32,))
-map16 = types.Array((msgpack_ref, msgpack_ref), dims=(types.u16,))
-map32 = types.Array((msgpack_ref, msgpack_ref), dims=(types.u32,))
-
+array16 = types.array(msgpack_ref, dims=types.u16)
+array32 = types.array(msgpack_ref, dims=types.u32)
+map16 = types.array((msgpack_ref, msgpack_ref), dims=types.u16)
+map32 = types.array((msgpack_ref, msgpack_ref), dims=types.u32)
 
 # =============================================================================
 # Encoding Helpers

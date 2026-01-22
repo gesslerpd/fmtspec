@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -10,8 +11,6 @@ from .._utils import sizeof
 from ._ref import Ref
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from .._protocol import Context, Format, Size, Type
 
 
@@ -158,10 +157,10 @@ class Array:
         return items
 
 
-def array(fmt: Format, dims: int | Ref | Iterable[int | Ref] = ()) -> Array:
+def array(fmt: Format, dims: int | Ref | Type | Iterable[int | Ref | Type] = ()) -> Array:
     """Helper that returns an `Array` instance for the given element format
     and dimensions. Mirrors the old helper but produces an efficient `Array`.
     """
-    if isinstance(dims, (int, Ref)):
+    if not isinstance(dims, Iterable):
         dims = (dims,)
     return Array(fmt, tuple(dims))
