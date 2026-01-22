@@ -29,11 +29,14 @@ from ._literal import Literal as Literal
 from ._literal import Null as Null
 from ._optional import Optional as Optional
 from ._sized import Sized as Sized
+
+# FUTURE: remove this PrefixString
 from ._str import PrefixedStr as PrefixedStr
-from ._str import TerminatedString as TerminatedString
+from ._str import String as String
 from ._switch import Switch as Switch
 from ._tagged import RangeDecoder as RangeDecoder
 from ._tagged import TaggedUnion as TaggedUnion
+from ._takeuntil import TakeUntil as TakeUntil
 
 # non-Type symbols often used in formats (FUTURE: move these to top-level?)
 from ._ref import Ref as Ref

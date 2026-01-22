@@ -18,7 +18,7 @@ class NestedDataClass:
 def test_roundtrip():
     obj = ExampleDataClass(key="value", number=42)
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -34,7 +34,7 @@ def test_nested():
     obj = NestedDataClass(inner=ExampleDataClass(key="value", number=42), flag=1)
     fmt = {
         "inner": {
-            "key": types.TerminatedString(b"\0", encoding="utf-8"),
+            "key": types.TakeUntil(types.String(), b"\0"),
             "number": types.Int(byteorder="little", signed=False, size=4),
         },
         "flag": types.Int(byteorder="big", signed=False, size=2),
@@ -53,7 +53,7 @@ def test_partial_nested():
     partial_obj = {"inner": ExampleDataClass(key="value", number=42), "flag": 1}
     fmt = {
         "inner": {
-            "key": types.TerminatedString(b"\0", encoding="utf-8"),
+            "key": types.TakeUntil(types.String(), b"\0"),
             "number": types.Int(byteorder="little", signed=False, size=4),
         },
         "flag": types.Int(byteorder="big", signed=False, size=2),
@@ -76,7 +76,7 @@ class DataClassWithDefaults:
 def test_defaults():
     obj = DataClassWithDefaults(key="value")
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -91,7 +91,7 @@ def test_defaults():
 def test_partial_fmt():
     obj = DataClassWithDefaults(key="value")
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
     }
 
     data = encode(obj, fmt)

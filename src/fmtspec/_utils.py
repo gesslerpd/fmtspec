@@ -54,13 +54,6 @@ def derive_fmt(cls: type) -> dict[str, Format]:
     Returns:
         A dictionary mapping field names to their format specifications.
 
-    Examples:
-        >>> @dataclass
-        ... class Example:
-        ...     name: Annotated[str, TerminatedString(b"\\0", encoding="utf-8")]
-        ...     age: Annotated[int, Int(byteorder="little", signed=False, size=4)]
-        >>> derive_fmt(Example)
-        {'name': TerminatedString(...), 'age': Int(...)}
     """
     type_hints = get_type_hints(cls, include_extras=True)
     result: dict[str, Format] = {}

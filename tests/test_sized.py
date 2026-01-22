@@ -29,7 +29,7 @@ def test_prefixed_bytes_size_is_none() -> None:
 
 def test_terminated_string_size_is_none() -> None:
     """TerminatedString is greedy, so size should be None."""
-    assert types.TerminatedString(terminator=b"\0").size is None
+    assert types.TakeUntil(types.String(), b"\0").size is ...
 
 
 def test_prefixed_array_size_is_none() -> None:

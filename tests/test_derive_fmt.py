@@ -8,7 +8,7 @@ import pytest
 from fmtspec import EncodeError, decode, decode_stream, derive_fmt, encode, types
 
 INT_FMT = types.Int(byteorder="little", signed=False, size=4)
-STR_FMT = types.TerminatedString(b"\0", encoding="utf-8")
+STR_FMT = types.TakeUntil(types.String(), b"\0")
 
 FMT = {
     "key": STR_FMT,

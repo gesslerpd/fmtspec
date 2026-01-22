@@ -68,7 +68,7 @@ def test_sizeof_variable_types_is_none() -> None:
     """sizeof should return None for variable-size types."""
     prefix_fmt = types.Int(byteorder="big", signed=False, size=2)
     assert sizeof(types.PrefixedBytes(prefix_fmt=prefix_fmt)) is None
-    assert sizeof(types.TerminatedString(terminator=b"\0")) is None
+    assert sizeof(types.TakeUntil(types.String(), b"\0")) is ...
     assert sizeof(types.Switch(key=types.Ref("type"), cases={})) is None
     assert sizeof(types.Sized(key=types.Ref("length"), fmt=types.Bytes())) is ...
 

@@ -3,7 +3,7 @@ import pytest
 from fmtspec import DecodeError, EncodeError, decode, encode, types
 
 FMT = {
-    "key": types.TerminatedString(b"\0", encoding="utf-8"),
+    "key": types.TakeUntil(types.String(), b"\0"),
     "number": types.Int(byteorder="little", signed=False, size=4),
 }
 VALID_DATA = b"value\0\x2a\x00\x00\x00"

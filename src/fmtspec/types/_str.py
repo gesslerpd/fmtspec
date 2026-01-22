@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from io import BytesIO
 from struct import Struct
 from typing import Any, BinaryIO, ClassVar
 
@@ -7,45 +6,20 @@ from ._int import Int
 
 
 @dataclass(frozen=True, slots=True)
-class TerminatedString:
-    """String terminated by a specific byte sequence."""
-
-    # class variables
-    size: ClassVar[None] = None
-
-    # fields
-    terminator: bytes
+class String:
+    size: int | None = None
     encoding: str = "utf-8"
 
     def encode(self, value: str, stream: BinaryIO, **_: Any) -> None:
-        # perf: avoid temporary concatenation of bytes
-        stream.write(value.encode(self.encoding))
-        stream.write(self.terminator)
+        data = value.encode(self.encoding)
+        if self.size is not None and len(data) != self.size:
+            raise ValueError(f"Expected {self.size} bytes, got {len(data)}")
+        stream.write(data)
 
     def decode(self, stream: BinaryIO, **_: Any) -> str:
-        term = self.terminator
-        term_len = len(term)
-
-        # perf: optimized path for BytesIO without per-byte reads
-        if isinstance(stream, BytesIO):
-            start = stream.tell()
-            mv = stream.getbuffer()
-            # search in the remaining buffer
-            idx = mv[start:].tobytes().find(term)
-            if idx == -1:
-                raise ValueError(f"Terminator {term!r} not found in data")
-            # read exactly the found slice (advances stream)
-            stream.read(idx + term_len)
-            return mv[start : start + idx].tobytes().decode(self.encoding)
-
-        result = bytearray()
-        while True:
-            byte = stream.read(1)
-            if not byte:
-                raise ValueError(f"Terminator {term!r} not found in data")
-            result.append(byte[0])
-            if len(result) >= term_len and result[-term_len:] == term:
-                return bytes(result[:-term_len]).decode(self.encoding)
+        if self.size is None:
+            return stream.read().decode(self.encoding)
+        return stream.read(self.size).decode(self.encoding)
 
 
 @dataclass(frozen=True, slots=True)

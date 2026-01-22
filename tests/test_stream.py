@@ -7,7 +7,7 @@ from fmtspec import decode_stream, encode_stream, types
 def test_roundtrip():
     obj = {"key": "value", "number": 42}
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -25,7 +25,7 @@ def test_roundtrip():
 def test_encode_to_file(tmp_path: Path):
     obj = {"key": "value", "number": 42}
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -43,7 +43,7 @@ def test_encode_to_file(tmp_path: Path):
 
 def test_decode_from_file(tmp_path: Path):
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -63,7 +63,7 @@ def test_decode_from_file(tmp_path: Path):
 def test_file_roundtrip(tmp_path: Path):
     obj = {"key": "value", "number": 42}
     fmt = {
-        "key": types.TerminatedString(b"\0", encoding="utf-8"),
+        "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
