@@ -3,7 +3,6 @@ from ._array import PrefixedArray as PrefixedArray
 from ._array import array as array
 from ._bitfield import Bitfields as Bitfields, Bitfield as Bitfield
 from ._bytes import Bytes as Bytes
-from ._bytes import PrefixedBytes as PrefixedBytes
 from ._constants import Endian as Endian
 from ._counted import CountPrefixedArray as CountPrefixedArray
 from ._counted import CountPrefixedMap as CountPrefixedMap

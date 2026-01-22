@@ -66,9 +66,9 @@ f64 = types.Float(byteorder="big", size=8)
 str8 = types.PrefixedStr(prefix_fmt=u8)
 str16 = types.PrefixedStr(prefix_fmt=u16)
 str32 = types.PrefixedStr(prefix_fmt=u32)
-bin8 = types.PrefixedBytes(prefix_fmt=u8)
-bin16 = types.PrefixedBytes(prefix_fmt=u16)
-bin32 = types.PrefixedBytes(prefix_fmt=u32)
+bin8 = types.Sized(length=u8, fmt=types.Bytes())
+bin16 = types.Sized(length=u16, fmt=types.Bytes())
+bin32 = types.Sized(length=u32, fmt=types.Bytes())
 
 # Self-referential format using Lazy
 msgpack_ref = types.Lazy(lambda: msgpack)
@@ -143,18 +143,18 @@ def _encode_str(value: str, stream: BinaryIO) -> None:
         str32.encode(value, stream)
 
 
-def _encode_bin(value: bytes, stream: BinaryIO) -> None:
+def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
     """Encode binary using smallest representation."""
     n = len(value)
     if n <= 0xFF:
         stream.write(b"\xc4")
-        bin8.encode(value, stream)
+        bin8.encode(value, stream, context=context)
     elif n <= 0xFFFF:
         stream.write(b"\xc5")
-        bin16.encode(value, stream)
+        bin16.encode(value, stream, context=context)
     else:
         stream.write(b"\xc6")
-        bin32.encode(value, stream)
+        bin32.encode(value, stream, context=context)
 
 
 # =============================================================================
@@ -199,14 +199,14 @@ def _decode_str_tagged(stream: BinaryIO, tag: int) -> str:
     return result
 
 
-def _decode_bin_tagged(stream: BinaryIO, tag: int) -> bytes:
+def _decode_bin_tagged(stream: BinaryIO, tag: int, context) -> bytes:
     """Decode binary by tag."""
     if tag == BIN8:
-        result = bin8.decode(stream)
+        result = bin8.decode(stream, context=context)
     elif tag == BIN16:
-        result = bin16.decode(stream)
+        result = bin16.decode(stream, context=context)
     else:
-        result = bin32.decode(stream)
+        result = bin32.decode(stream, context=context)
     return result
 
 
@@ -248,7 +248,7 @@ class MsgPack:
         elif t is str:
             _encode_str(value, stream)
         elif t is bytes or t is bytearray or t is memoryview:
-            _encode_bin(bytes(value), stream)
+            _encode_bin(bytes(value), stream, context)
         elif t is list or t is tuple:
             self._encode_array(list(value), stream, context)
         elif t is dict:
@@ -314,7 +314,7 @@ class MsgPack:
         elif tag == 0xC3:
             result = True
         elif BIN8 <= tag <= BIN32:
-            result = _decode_bin_tagged(stream, tag)
+            result = _decode_bin_tagged(stream, tag, context)
         elif tag == FLOAT32:
             result = f32.decode(stream)
         elif tag == FLOAT64:

@@ -7,12 +7,12 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 from .._stream import _decode_stream, _encode_stream
+from ._ref import Ref
 
 if TYPE_CHECKING:
     from types import EllipsisType
 
-    from .._protocol import Context, Format
-    from ._ref import Ref
+    from .._protocol import Context, Format, Type
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,28 +39,34 @@ class Sized:
     size: ClassVar[EllipsisType] = ...
 
     # fields
-    key: Ref
+    length: Ref | Type
     fmt: Format
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
-        """Encode value and verify length matches context[key]."""
-        expected_length = self.key.resolve(context)
+        """Encode value and verify length matches context[length]."""
 
         buffer = BytesIO()
         _encode_stream(value, self.fmt, buffer, context=context)
         encoded = buffer.getvalue()
 
-        if len(encoded) != expected_length:
-            raise ValueError(
-                f"Encoded length {len(encoded)} does not match "
-                f"expected length {expected_length} from key {self.key!r}"
-            )
+        if isinstance(self.length, Ref):
+            expected_length = self.length.resolve(context)
+            if len(encoded) != expected_length:
+                raise ValueError(
+                    f"Encoded length {len(encoded)} does not match "
+                    f"expected length {expected_length} from key {self.length!r}"
+                )
+        else:
+            self.length.encode(len(encoded), stream, context=context)
+
         stream.write(encoded)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
-        """Decode using length from context[key]."""
-        length = self.key.resolve(context)
+        """Decode using length from context[length]."""
+        if isinstance(self.length, Ref):
+            length = self.length.resolve(context)
+        else:
+            length = self.length.decode(stream, context=context)
         bounded_data = stream.read(length)
-
         inner_stream = BytesIO(bounded_data)
         return _decode_stream(inner_stream, self.fmt, context=context)[0]

@@ -22,9 +22,8 @@ def test_bytes_has_size() -> None:
 
 
 def test_prefixed_bytes_size_is_none() -> None:
-    """PrefixedBytes is variable-size, so size should be None."""
     prefix_fmt = types.Int(byteorder="big", signed=False, size=2)
-    assert types.PrefixedBytes(prefix_fmt=prefix_fmt).size is None
+    assert types.Sized(length=prefix_fmt, fmt=types.Bytes()).size is ...
 
 
 def test_terminated_string_size_is_none() -> None:
@@ -45,7 +44,7 @@ def test_switch_size_is_none() -> None:
 
 def test_sized_size_is_none() -> None:
     """Sized wraps unsized types, so size should be None."""
-    assert types.Sized(key=types.Ref("length"), fmt=types.Bytes()).size is ...
+    assert types.Sized(length=types.Ref("length"), fmt=types.Bytes()).size is ...
 
 
 def test_decode_simple() -> None:
@@ -54,7 +53,7 @@ def test_decode_simple() -> None:
 
     fmt = {
         "length": u2,
-        "data": types.Sized(key=types.Ref("length"), fmt=types.Bytes()),
+        "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
     # length=5, then 5 bytes of data, then extra byte that should not be read
@@ -72,7 +71,7 @@ def test_decode_with_inner_format() -> None:
     inner_fmt = {"a": u1, "b": u1}
     fmt = {
         "size": u2,
-        "body": types.Sized(key=types.Ref("size"), fmt=inner_fmt),
+        "body": types.Sized(length=types.Ref("size"), fmt=inner_fmt),
     }
 
     # size=2, then 2 bytes for inner format
@@ -88,7 +87,7 @@ def test_encode_simple() -> None:
 
     fmt = {
         "length": u2,
-        "data": types.Sized(key=types.Ref("length"), fmt=types.Bytes()),
+        "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
     obj = {"length": 5, "data": b"hello"}
@@ -105,7 +104,7 @@ def test_encode_with_inner_format() -> None:
     inner_fmt = {"a": u1, "b": u1}
     fmt = {
         "size": u2,
-        "body": types.Sized(key=types.Ref("size"), fmt=inner_fmt),
+        "body": types.Sized(length=types.Ref("size"), fmt=inner_fmt),
     }
 
     obj = {"size": 2, "body": {"a": 10, "b": 20}}
@@ -120,7 +119,7 @@ def test_encode_length_mismatch_raises() -> None:
 
     fmt = {
         "length": u2,
-        "data": types.Sized(key=types.Ref("length"), fmt=types.Bytes()),
+        "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
     }
 
     # length says 10 but data is only 5 bytes
@@ -139,11 +138,11 @@ def test_roundtrip() -> None:
     fmt = {
         "header_size": u2,
         "header": types.Sized(
-            key=types.Ref("header_size"),
+            length=types.Ref("header_size"),
             fmt={"version": u2, "flags": u2},
         ),
         "payload_size": u2,
-        "payload": types.Sized(key=types.Ref("payload_size"), fmt=types.Bytes()),
+        "payload": types.Sized(length=types.Ref("payload_size"), fmt=types.Bytes()),
     }
 
     obj = {
@@ -165,7 +164,7 @@ def test_decode_missing_key_raises() -> None:
 
     fmt = {
         "length": u2,
-        "data": types.Sized(key=types.Ref("wrong_key"), fmt=types.Bytes()),
+        "data": types.Sized(length=types.Ref("wrong_key"), fmt=types.Bytes()),
     }
 
     data = b"\x00\x05hello"
@@ -182,7 +181,7 @@ def test_encode_missing_key_raises() -> None:
 
     fmt = {
         "length": u2,
-        "data": types.Sized(key=types.Ref("wrong_key"), fmt=types.Bytes()),
+        "data": types.Sized(length=types.Ref("wrong_key"), fmt=types.Bytes()),
     }
 
     obj = {"length": 5, "data": b"hello"}

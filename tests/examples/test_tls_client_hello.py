@@ -32,7 +32,7 @@ random_fmt = {
 # session_id:
 #   - len: u1
 #   - sid: size len
-session_id_fmt = types.PrefixedBytes(prefix_fmt=u1)
+session_id_fmt = types.Sized(length=u1, fmt=types.Bytes())
 
 # cipher_suites:
 #   - len: u2
@@ -43,7 +43,7 @@ cipher_suites_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_
 # compression_methods:
 #   - len: u1
 #   - compression_methods: size len
-compression_methods_fmt = types.PrefixedBytes(prefix_fmt=u1)
+compression_methods_fmt = types.Sized(length=u1, fmt=types.Bytes())
 
 # server_name:
 #   - name_type: u1
@@ -51,7 +51,7 @@ compression_methods_fmt = types.PrefixedBytes(prefix_fmt=u1)
 #   - host_name: size length
 server_name_fmt = {
     "name_type": u1,
-    "host_name": types.PrefixedBytes(prefix_fmt=u2),
+    "host_name": types.Sized(length=u2, fmt=types.Bytes()),
 }
 
 # sni:
@@ -62,7 +62,7 @@ sni_fmt = types.PrefixedArray(byteorder="big", prefix_size=2, element_fmt=server
 # protocol:
 #   - strlen: u1
 #   - name: size strlen
-protocol_fmt = types.PrefixedBytes(prefix_fmt=u1)
+protocol_fmt = types.Sized(length=u1, fmt=types.Bytes())
 
 # alpn:
 #   - ext_len: u2
