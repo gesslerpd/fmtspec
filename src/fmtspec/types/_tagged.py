@@ -11,6 +11,10 @@ if TYPE_CHECKING:
     from .._protocol import Context
 
 
+# FUTURE: consider merging with Switch for a more general polymorphic type?
+# or remove this type since isn't used by any tests or exported currently
+
+
 @dataclass(frozen=True, slots=True)
 class TaggedUnion:
     """Tag-based polymorphic type dispatcher.

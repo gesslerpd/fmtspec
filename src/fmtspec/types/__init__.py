@@ -2,7 +2,6 @@ from ._array import Array as Array
 from ._array import array as array
 from ._bitfield import Bitfields as Bitfields, Bitfield as Bitfield
 from ._bytes import Bytes as Bytes
-from ._constants import Endian as Endian
 from ._float import Float as Float
 from ._int import Int as Int
 
@@ -40,8 +39,6 @@ from ._sized import Sized as Sized
 
 from ._str import String as String
 from ._switch import Switch as Switch
-from ._tagged import RangeDecoder as RangeDecoder
-from ._tagged import TaggedUnion as TaggedUnion
 from ._takeuntil import TakeUntil as TakeUntil
 
 # non-Type symbols often used in formats (FUTURE: move these to top-level?)

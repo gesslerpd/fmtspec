@@ -23,10 +23,12 @@ class Float:
         object.__setattr__(self, "_struct", struct.Struct(f"{endian}{precision}"))
 
     def encode(self, value: float, stream: BinaryIO, **_: Any) -> None:
+        # FUTURE: use the pack_into method for efficiency?
         stream.write(self._struct.pack(value))
 
     def decode(self, stream: BinaryIO, **_: Any) -> float:
         raw = stream.read(self.size)
+        # FUTURE: use the unpack_from method for efficiency?
         return self._struct.unpack(raw)[0]
 
 
