@@ -1,20 +1,36 @@
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import IntEnum, IntFlag, auto
 
 from fmtspec import decode, encode, types
 
 
 class NumberEnum(IntEnum):
-    ZERO = 0
-    ONE = 1
-    TWO = 2
+    NOTHING = 0
     EVERYTHING = 42
+
+
+class Permission(IntFlag):
+    READ = auto()
+    WRITE = auto()
+    EXECUTE = auto()
 
 
 @dataclass
 class ExampleDataClass:
     key: str
     number: int  # `int | NumberEnum` is not supported directly by msgspec
+
+
+@dataclass
+class StrictEnum:
+    key: str
+    number: NumberEnum
+
+
+@dataclass
+class StrictFlag:
+    key: str
+    number: Permission
 
 
 @dataclass
@@ -108,3 +124,110 @@ def test_partial_fmt():
 
     assert decode(data, fmt, shape=DataClassWithDefaults) == obj
     assert obj.number == 42
+
+
+def test_strict_enum():
+    obj = StrictEnum(key="value", number=42)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x2a\x00\x00\x00"
+    result = decode(data, fmt, shape=StrictEnum)
+    assert result == obj
+    assert result.number.name == "EVERYTHING"
+
+    obj = StrictEnum(key="value", number=NumberEnum.EVERYTHING)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x2a\x00\x00\x00"
+    result = decode(data, fmt, shape=StrictEnum)
+    assert result == obj
+    assert result.number.name == "EVERYTHING"
+
+
+def test_strict_flag():
+    obj = StrictFlag(key="value", number=Permission.READ | Permission.WRITE)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x03\x00\x00\x00"
+    result = decode(data, fmt, shape=StrictFlag)
+    assert result == obj
+    assert result.number.name == "READ|WRITE"
+
+
+def test_unstrict_enum():
+    obj = StrictEnum(key="value", number=NumberEnum.EVERYTHING)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x2a\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert result["number"].name == "EVERYTHING"
+
+    obj = StrictFlag(key="value", number=0)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x00\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert result["number"].name == "NOTHING"
+
+    obj = StrictEnum(key="value", number=8)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x08\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert not hasattr(result["number"], "name")
+
+
+def test_unstrict_flag():
+    obj = StrictFlag(key="value", number=Permission.READ | Permission.WRITE)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x03\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert result["number"].name == "READ|WRITE"
+
+    obj = StrictFlag(key="value", number=Permission(0))
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x00\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert result["number"].name is None
+
+    obj = StrictFlag(key="value", number=8)
+    fmt = {
+        "key": types.TakeUntil(types.String(), b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
+    }
+    data = encode(obj, fmt)
+    assert data == b"value\0\x08\x00\x00\x00"
+    result = decode(data, fmt)
+    assert encode(result, fmt) == data
+    assert result["number"].name is None

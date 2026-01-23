@@ -45,10 +45,10 @@ class Bitfield:
 
     # implement Type interface so this can be used directly
     # FUTURE: see if this can be garbage collected or make weak `self` reference
-    def encode(self, value: Any, stream: BinaryIO, **_: Any):
+    def encode(self, value: int, stream: BinaryIO, **_: Any):
         return Bitfields(fields={"": self}).encode({"": value}, stream, **_)
 
-    def decode(self, stream: BinaryIO, **_: Any):
+    def decode(self, stream: BinaryIO, **_: Any) -> int:
         return Bitfields(fields={"": self}).decode(stream, **_)[""]
 
 
@@ -141,7 +141,7 @@ class Bitfields:
 
         object.__setattr__(self, "_offsets", offsets)
 
-    def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, value: dict[str, int], stream: BinaryIO, **_: Any) -> None:
         int_val = 0
         for name, bitfield in self.fields.items():
             if name not in value:
@@ -152,7 +152,7 @@ class Bitfields:
             int_val |= val << self._offsets[name]
         self._int_type.encode(int_val, stream, **_)
 
-    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int | bool]:
+    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
         int_val = self._int_type.decode(stream, **_)
         # if the bitfield is a single bit, return bool to support `bool` annotated fields
         # True/False behave as `int` but not other way around

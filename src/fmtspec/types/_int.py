@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from enum import IntEnum, IntFlag
 from struct import Struct
 from typing import Any, BinaryIO, Literal
 
@@ -21,6 +22,8 @@ class Int:
     byteorder: Literal["little", "big"]
     signed: bool
     size: Literal[1, 2, 4, 8]
+    enum: type[IntEnum] | type[IntFlag] | None = None
+    # FUTURE: implement `strict` enum mode?
     _struct: Struct = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -30,6 +33,9 @@ class Int:
 
     def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
         # FUTURE: use the pack_into method for efficiency?
+        # FUTURE: validate enum membership? or warn about it? strict mode?
+        # if self.enum and value not in self.enum:
+        #     value = self.enum(value)
         stream.write(self._struct.pack(value))
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
@@ -37,7 +43,11 @@ class Int:
         if len(raw) < self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(raw)}")
         # FUTURE: use the unpack_from method for efficiency?
-        return self._struct.unpack(raw)[0]
+        value = self._struct.unpack(raw)[0]
+        if self.enum and value in self.enum:
+            # convert to enum member if possible
+            value = self.enum(value)
+        return value
 
 
 # big endian variants (shorthand names)
