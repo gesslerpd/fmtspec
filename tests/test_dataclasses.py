@@ -1,12 +1,20 @@
 from dataclasses import dataclass
+from enum import IntEnum
 
 from fmtspec import decode, encode, types
+
+
+class NumberEnum(IntEnum):
+    ZERO = 0
+    ONE = 1
+    TWO = 2
+    EVERYTHING = 42
 
 
 @dataclass
 class ExampleDataClass:
     key: str
-    number: int
+    number: int  # `int | NumberEnum` is not supported directly by msgspec
 
 
 @dataclass
@@ -16,7 +24,7 @@ class NestedDataClass:
 
 
 def test_roundtrip():
-    obj = ExampleDataClass(key="value", number=42)
+    obj = ExampleDataClass(key="value", number=NumberEnum.EVERYTHING)
     fmt = {
         "key": types.TakeUntil(types.String(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),

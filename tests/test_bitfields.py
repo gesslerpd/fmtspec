@@ -1,9 +1,10 @@
 from dataclasses import dataclass
+from enum import IntEnum, IntFlag, auto
 from typing import Annotated
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode
+from fmtspec import DecodeError, EncodeError, decode, encode, sizeof
 from fmtspec.types import Bitfield, Bitfields, u16
 
 
@@ -280,12 +281,36 @@ def test_decode_insufficient_data():
         decode(b"\x00", bitfield)
 
 
+class Permissions(IntFlag):
+    READ = auto()
+    WRITE = auto()
+    EXECUTE = auto()
+
+
+class Integers(IntEnum):
+    ONE = 1
+    TWO = 2
+
+
 @dataclass
 class Struct:
     first: Annotated[int, u16]
-    # FUTURE: support bool bitfields? True/False behave as `int` but not other way around
-    flag: Annotated[int, Bitfield(bits=1, offset=0)]  # [0:1] index bit (exclusive)
-    other_flag: Annotated[int, Bitfield(bits=3, offset=4)]  # [4:7] index bits (exclusive)
+    flag: Annotated[bool, Bitfield(bits=1, align=2)]  # [0:1] index bit (exclusive)
+    other_flag: Annotated[Permissions, Bitfield(bits=3, offset=4)]  # [4:7] index bits (exclusive)
+
+
+def test_bitfield_dataclass():
+    obj = Struct(
+        first=0x1234,
+        flag=True,
+        other_flag=Permissions.EXECUTE,
+    )
+    data = encode(obj)
+
+    assert data == b"\x12\x34\x00\x41"
+
+    result = decode(data, shape=Struct)
+    assert result == obj
 
 
 MIXED_BITFIELDS_FMT = {
@@ -302,7 +327,7 @@ MIXED_BITFIELDS_FMT = {
 def test_bitfield_mixed():
     obj = {
         "first": 0x1234,
-        "flag": 1,
+        "flag": Integers.ONE,
         "other_flag": 5,
         "mid": 0x5678,
         "flag2": 1,
@@ -327,10 +352,10 @@ def test_bitfield_align_starts_sized_group():
         "tail": u16,
     }
 
-    obj = {"head": 0x1234, "a": 0xA, "b": 0xB, "c": 1, "d": 0x1, "tail": 0x5678}
+    obj = {"head": 0x1234, "a": 0xA, "b": 0xB, "c": 0xFF, "d": 0xF, "tail": 0x5678}
     data = encode(obj, fmt)
 
-    assert data == b"\x12\x34\x00\x00\x00\x00\x00\x00\x00\xba\x01\x01\x56\x78"
+    assert data == b"\x12\x34\x00\x00\x00\x00\x00\x00\x00\xba\xff\x0f\x56\x78"
 
     result = decode(data, fmt)
     assert result == obj
@@ -386,3 +411,65 @@ def test_bitfields_multi_align_direct():
 
     result = decode(data, bf)
     assert result == obj
+
+
+def test_bitfield_direct():
+    bf = Bitfield(bits=3)
+
+    assert bf.size == sizeof(bf) == 1
+
+    obj = Permissions.READ | Permissions.WRITE | Permissions.EXECUTE
+    data = encode(obj, bf)
+
+    assert data == b"\x07"
+
+    result = decode(data, bf)
+    assert result == obj
+
+    with pytest.raises(EncodeError, match="Value 8 for field '' out of range"):
+        encode(obj + 1, bf)
+
+
+def test_bitfield_direct_aligned():
+    bf = Bitfield(bits=3, offset=9, align=2)
+
+    assert bf.size == sizeof(bf) == 2
+
+    obj = Permissions.READ | Permissions.WRITE | Permissions.EXECUTE
+    data = encode(obj, bf)
+
+    assert data == b"\x0e\x00"
+
+    result = decode(data, bf)
+    assert result == obj
+
+    with pytest.raises(EncodeError, match="Value 8 for field '' out of range"):
+        encode(obj + 1, bf)
+
+    bf = Bitfield(bits=3, offset=9)
+
+    assert bf.size == sizeof(bf) == 2
+
+
+def test_align_on_non_first_field_raises() -> None:
+    """Using `align` on a non-first field in an auto-placement group should fail."""
+    with pytest.raises(
+        ValueError, match="Bitfield align is only allowed on the first field of a group"
+    ):
+        Bitfields(
+            fields={
+                "a": Bitfield(bits=1),
+                "b": Bitfield(bits=1, align=2),
+            }
+        )
+
+
+def test_forced_align_group_size_exceeded() -> None:
+    """A forced-align group whose total bits exceed the aligned size should fail."""
+    with pytest.raises(ValueError, match="Bitfield exceeds forced align group size"):
+        Bitfields(
+            fields={
+                "a": Bitfield(bits=5, align=1),  # forced_bits = 8
+                "b": Bitfield(bits=4),
+            }
+        )

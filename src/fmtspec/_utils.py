@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping
+from enum import EnumType
 from functools import cache
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, get_args, get_origin, get_type_hints
 
@@ -92,14 +93,14 @@ def _extract_format(metadata: tuple) -> Format | None:  # noqa: PLR0911
         The first valid Format found, or None if no format is found.
     """
     for item in metadata:
-        # Check if item is a Type (has 'size' attribute)
+        # Check if item is a Type (has 'encode'/'decode' methods)
         if callable(getattr(item, "encode", None)) and callable(getattr(item, "decode", None)):
             return item
         # Check if item is a Mapping (dict format)
         if isinstance(item, Mapping):
             return item
         # Check if item is a tuple/list format
-        if isinstance(item, (Iterable, Iterator)) and not isinstance(item, str):
+        if isinstance(item, (Iterable, Iterator)) and not isinstance(item, (EnumType, str)):
             return item
         # Check if item is itself an Annotated type (nested)
         # raise TypeError(f"Unsupported format type in Annotated metadata {item}")

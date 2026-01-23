@@ -18,6 +18,8 @@ class Bitfield:
     align: Literal[1, 2, 4, 8] | None = None
     # aka max value
     mask: int = field(init=False, repr=False, compare=False)
+    # computed minimal size in bytes for this single bitfield when used alone
+    size: Literal[1, 2, 4, 8] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.bits <= 0:
@@ -27,11 +29,33 @@ class Bitfield:
 
         object.__setattr__(self, "mask", (1 << self.bits) - 1)
 
+        # compute minimal size (in bytes) required to hold this bitfield
+        total_bits = self.offset + self.bits
+        if self.align:
+            forced_bits = self.align * 8
+            if total_bits > forced_bits:
+                raise ValueError("Bitfield exceeds forced align group size")
+            total_bits = forced_bits
+
+        # ensure size is power-of-two bytes
+        size = 8
+        while total_bits > size:
+            size *= 2
+        object.__setattr__(self, "size", size // 8)
+
+    # implement Type interface so this can be used directly
+    # FUTURE: see if this can be garbage collected or make weak `self` reference
+    def encode(self, value: Any, stream: BinaryIO, **_: Any):
+        return Bitfields(fields={"": self}).encode({"": value}, stream, **_)
+
+    def decode(self, stream: BinaryIO, **_: Any):
+        return Bitfields(fields={"": self}).decode(stream, **_)[""]
+
 
 @dataclass(frozen=True, slots=True)
 class Bitfields:
     fields: dict[str, Bitfield]
-    size: Literal[0, 1, 2, 4, 8] = 0
+    size: Literal[1, 2, 4, 8] | None = None
     _int_type: Int = field(init=False, repr=False, compare=False)
     _offsets: dict[str, int] = field(init=False, repr=False, compare=False)
 
@@ -89,10 +113,11 @@ class Bitfields:
                 i = j
 
             total_bits = max(max_bits, running_bits)
-            size = 1
-            while total_bits > size * 8:
+            # ensure size is power-of-two bytes
+            size = 8
+            while total_bits > size:
                 size *= 2
-            object.__setattr__(self, "size", size)
+            object.__setattr__(self, "size", size // 8)
 
         if self.size not in SIZE_MAP:
             raise ValueError(f"Unsupported size {self.size}")
@@ -129,7 +154,14 @@ class Bitfields:
 
     def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int | bool]:
         int_val = self._int_type.decode(stream, **_)
+        # if the bitfield is a single bit, return bool to support `bool` annotated fields
+        # True/False behave as `int` but not other way around
         return {
-            name: (int_val >> self._offsets[name]) & bitfield.mask
+            name: (
+                (int_val >> self._offsets[name]) & bitfield.mask
+                if bitfield.bits > 1
+                # convert to bool with `==` for single-bit fields
+                else (int_val >> self._offsets[name]) & 1 == 1
+            )
             for name, bitfield in self.fields.items()
         }
