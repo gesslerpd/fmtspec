@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, BinaryIO, Literal
+from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 
 from ._int import Int, u8, u16, u32, u64
+
+if TYPE_CHECKING:
+    from enum import IntEnum, IntFlag
 
 SIZE_MAP = {1: u8, 2: u16, 4: u32, 8: u64}
 
@@ -16,6 +19,7 @@ class Bitfield:
     # zero means auto-assign
     offset: int = 0
     align: Literal[1, 2, 4, 8] | None = None
+    enum: type[IntEnum] | type[IntFlag] | None = None
     # aka max value
     mask: int = field(init=False, repr=False, compare=False)
     # computed minimal size in bytes for this single bitfield when used alone
@@ -152,16 +156,18 @@ class Bitfields:
             int_val |= val << self._offsets[name]
         self._int_type.encode(int_val, stream, **_)
 
-    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
-        int_val = self._int_type.decode(stream, **_)
+    def _decode_bitfield(self, bitfield, name, int_val):
+        raw = (int_val >> self._offsets[name]) & bitfield.mask
+        if bitfield.enum and raw in bitfield.enum:
+            return bitfield.enum(raw)
+
         # if the bitfield is a single bit, return bool to support `bool` annotated fields
         # True/False behave as `int` but not other way around
+        return raw == 1 if bitfield.bits == 1 else raw
+
+    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
+        int_val = self._int_type.decode(stream, **_)
         return {
-            name: (
-                (int_val >> self._offsets[name]) & bitfield.mask
-                if bitfield.bits > 1
-                # convert to bool with `==` for single-bit fields
-                else (int_val >> self._offsets[name]) & 1 == 1
-            )
+            name: self._decode_bitfield(bitfield, name, int_val)
             for name, bitfield in self.fields.items()
         }

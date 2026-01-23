@@ -451,6 +451,72 @@ def test_bitfield_direct_aligned():
     assert bf.size == sizeof(bf) == 2
 
 
+def test_bitfield_direct_with_enum():
+    bf = Bitfield(bits=4, enum=Permissions)
+
+    assert bf.size == sizeof(bf) == 1
+
+    obj = Permissions.READ | Permissions.WRITE | Permissions.EXECUTE
+    data = encode(obj, bf)
+
+    assert data == b"\x07"
+
+    result = decode(data, bf)
+    assert result == obj
+    assert result.name == "READ|WRITE|EXECUTE"
+
+    data = encode(obj + 1, bf)
+    assert data == b"\x08"
+    result = decode(data, bf)
+    assert result.name is None
+
+
+def test_bitfields_field_enum_roundtrip():
+    bf = Bitfields(
+        size=1,
+        fields={
+            "perm": Bitfield(bits=3, enum=Permissions),
+            "other": Bitfield(bits=5),
+        },
+    )
+
+    obj = {"perm": Permissions.WRITE, "other": 0b10101}
+    data = encode(obj, bf)
+
+    assert data == 0b01010_1010.to_bytes()
+
+    result = decode(data, bf)
+    assert result == obj
+    assert result["perm"].name == "WRITE"
+
+
+@dataclass
+class StructEnum:
+    first: Annotated[int, u16]
+    other_flag: Annotated[int, Bitfield(bits=3, offset=4, enum=Integers)]
+
+
+def test_bitfield_dataclass_with_enum():
+    fmt = {
+        "first": u16,
+        "other_flag": Bitfield(bits=3, offset=4, enum=Integers),
+    }
+    obj = StructEnum(first=0x1234, other_flag=Integers.ONE)
+    data = encode(obj, fmt)
+
+    assert data == b"\x12\x34\x10"
+
+    result = decode(data, shape=StructEnum)
+    assert result == obj
+    assert not hasattr(result.other_flag, "name")
+
+    result = decode(data, fmt)
+    assert result["other_flag"].name == "ONE"
+
+    result = decode(b"\x12\x34\xf0", fmt)
+    assert not hasattr(result["other_flag"], "name")
+
+
 def test_align_on_non_first_field_raises() -> None:
     """Using `align` on a non-first field in an auto-placement group should fail."""
     with pytest.raises(
