@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, BinaryIO, ClassVar, get_args, get_origin
 
 from .._stream import _decode_stream, _encode_stream
+from .._utils import _normalize_format, derive_fmt
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,8 +45,6 @@ class Switch:
     Key-mode (existing behaviour): provide `key` and `cases` to select a
     `Format` based on a sibling field in the `context`.
 
-    Tag-mode (new): provide `decode_tag` and `decoders`/`range_decoders` to
-    parse a tag from the stream and dispatch to an appropriate decoder.
     """
 
     size: ClassVar[EllipsisType] = ...
@@ -88,85 +87,66 @@ class Switch:
 class TaggedUnion:
     size: ClassVar[EllipsisType] = ...
 
-    default: Format | Callable[[BinaryIO, Any, Context], Any] | None = None
-    # Tag-mode (new): optional tag reader and decoders
-    decode_tag: Callable[[BinaryIO], Any] | None = None
-    decoders: dict[Any, Callable[[BinaryIO, Any, Context], Any]] | None = None
-    range_decoders: list[RangeDecoder] | None = None
+    tag: Format | Ref
+    fmt_map: dict[int | range, Any]
+    # runtime mappings populated in __post_init__
+    fmt_by_tag: dict[Any, Any] | None = None
+    encoders_by_type: dict[type, tuple[Any, Any]] | None = None
 
-    # Encoding helpers for tag-mode
-    encode_dispatch: Callable[[Any, BinaryIO, Context], None] | None = None
-    encoders_by_type: dict[type, tuple[Any, Format | Callable]] | None = None
-    tag_writer: Callable[[Any, BinaryIO, Context], None] | None = None
-    tag_unknown_raises: bool = True
+    def __post_init__(self) -> None:
+        fmt_map_norm: dict[Any, Any] = {}
+        enc_by_type: dict[type, tuple[Any, Any]] = {}
+
+        for tag_val, fmt_val in (self.fmt_map or {}).items():
+            if isinstance(fmt_val, type):
+                fmt_norm = derive_fmt(fmt_val)
+                fmt_map_norm[tag_val] = fmt_norm
+                enc_by_type[fmt_val] = (tag_val, fmt_norm)
+                continue
+
+            fmt_norm = _normalize_format(fmt_val)
+            fmt_map_norm[tag_val] = fmt_norm
+
+            origin = get_origin(fmt_val)
+            if origin is Annotated:
+                base = get_args(fmt_val)[0]
+                if isinstance(base, type):
+                    enc_by_type[base] = (tag_val, fmt_norm)
+
+        # Always set the normalized map; store encoders only if any were found
+        object.__setattr__(self, "fmt_by_tag", fmt_map_norm)
+        object.__setattr__(self, "encoders_by_type", enc_by_type or None)
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
-        # Tag-mode encoding
-        if self.encode_dispatch is not None:
-            self.encode_dispatch(value, stream, context)
-            return
-
+        # Fast path: type-based dispatch
         if self.encoders_by_type:
-            enc = self.encoders_by_type.get(type(value))
-            if not enc:
-                raise ValueError("no encoder registered for value type")
-            tag, fmt_or_callable = enc
+            for t, mapping in self.encoders_by_type.items():
+                if isinstance(value, t):
+                    tag_val, fmt = mapping
+                    _encode_stream(tag_val, self.tag, stream, context=context)
+                    _encode_stream(value, fmt, stream, context=context)
+                    return
 
-            # Write tag
-            if self.tag_writer is not None:
-                self.tag_writer(tag, stream, context)
-            # Best-effort simple tag writing for small integer tags or bytes
-            # elif isinstance(tag, int) and 0 <= tag <= 0xFF:
-            #     stream.write(bytes((tag,)))
-            elif isinstance(tag, (bytes, bytearray)):
-                stream.write(tag)
-            else:
-                raise ValueError("tag_writer required for non-byte/int tags")
+        # Fallback: attempt each format until one succeeds
+        for tag_val, fmt in (self.fmt_by_tag or {}).items():
+            try:
+                tmp = BytesIO()
+                _encode_stream(value, fmt, tmp, context=context)
+            except Exception:
+                continue
 
-            # Write payload
-            if hasattr(fmt_or_callable, "__call__") and not hasattr(fmt_or_callable, "decode"):
-                # callable encoder
-                fmt_or_callable(value, stream, context)
-            else:
-                # Assume it's a Format
-                _encode_stream(value, fmt_or_callable, stream, context=context)
+            _encode_stream(tag_val, self.tag, stream, context=context)
+            stream.write(tmp.getvalue())
             return
 
-        raise ValueError("no encoding strategy available for Switch in tag-mode")
+        raise ValueError("Unknown type")
 
-    def decode(self, stream: BinaryIO, *, context: Context) -> Any:  # noqa: PLR0911
-        # Tag-mode decoding
-        if self.decode_tag is None:
-            # No discriminator provided; nothing to do
-            return stream.read()
+    def decode(self, stream: BinaryIO, *, context: Context) -> Any:
+        tag = _decode_stream(stream, self.tag, context=context)[0]
 
-        tag = self.decode_tag(stream)
-
-        # Exact-match decoders first
-        if self.decoders:
-            dec = self.decoders.get(tag)
-            if dec is not None:
-                return dec(stream, tag, context)
-
-        # Range decoders next
-        if self.range_decoders:
-            for rd in self.range_decoders:
-                if rd.matches(tag):
-                    return rd.decoder(stream, tag, context)
-
-        # Default behavior
-        if callable(self.default):
-            # default expected to be like a decoder(stream, tag, context)
-            return self.default(stream, tag, context)
-
-        if self.default is not None:
-            # treat default as a Format and decode remaining payload with it
-            inner_data = stream.read()
-            inner_stream = BytesIO(inner_data)
-            return _decode_stream(inner_stream, self.default, context=context)[0]
-
-        if self.tag_unknown_raises:
+        fmt = (self.fmt_by_tag or {}).get(tag)
+        if fmt is None:
             raise ValueError(f"Unknown tag: 0x{int(tag):02x}")
 
-        # Fall back to returning raw payload bytes (Switch-like behaviour)
-        return stream.read()
+        inner = stream.read()
+        return _decode_stream(BytesIO(inner), fmt, context=context)[0]

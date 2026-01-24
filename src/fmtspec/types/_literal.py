@@ -55,3 +55,6 @@ class Null:
 
     def decode(self, stream: BinaryIO, **_: Any) -> None:
         pass
+
+
+null = Null()

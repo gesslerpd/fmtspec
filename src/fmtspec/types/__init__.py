@@ -33,12 +33,13 @@ from ._float import f32le as f32le, f64le as f64le
 
 from ._lazy import Lazy as Lazy
 from ._literal import Literal as Literal
-from ._literal import Null as Null
+from ._literal import Null as Null, null as null
 from ._optional import Optional as Optional
 from ._sized import Sized as Sized
 
 from ._str import String as String
 from ._switch import Switch as Switch
+from ._switch import TaggedUnion as TaggedUnion
 from ._takeuntil import TakeUntil as TakeUntil
 
 # non-Type symbols often used in formats (FUTURE: move these to top-level?)
