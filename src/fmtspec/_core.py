@@ -1,4 +1,5 @@
 import inspect
+import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
 from io import BytesIO
 from typing import Any, BinaryIO, assert_never, get_type_hints, overload
@@ -58,9 +59,29 @@ def _create_new_instance[T](cls: type[T], data: dict[str, Any]) -> T:
     return instance
 
 
+def _msgspec_encode_hook(obj: Any) -> Any:
+    if isinstance(obj, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+        obj = int(obj)
+    else:
+        raise TypeError(f"Unsupported type for encoding hook: {type(obj)} ({obj})")
+    return obj
+
+
+def _msgspec_decode_hook(cls: type, obj: Any) -> Any:
+    if issubclass(cls, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+        obj = cls(obj)
+    else:
+        raise TypeError(f"Unsupported type for decoding hook: {cls} ({obj})")
+    return obj
+
+
 def _to_builtins(obj: Any, recursive: bool = True) -> Any:
     try:
-        return msgspec.to_builtins(obj, builtin_types=BUILTIN_TYPES)
+        return msgspec.to_builtins(
+            obj,
+            builtin_types=BUILTIN_TYPES,
+            enc_hook=None if recursive else _msgspec_encode_hook,
+        )
     except TypeError:
         if not recursive:
             raise
@@ -75,7 +96,12 @@ def _to_builtins(obj: Any, recursive: bool = True) -> Any:
 
 def _convert[T](obj: Any, shape: type[T], recursive: bool = True) -> T:
     try:
-        return msgspec.convert(obj, shape, builtin_types=BUILTIN_TYPES)
+        return msgspec.convert(
+            obj,
+            shape,
+            builtin_types=BUILTIN_TYPES,
+            dec_hook=None if recursive else _msgspec_decode_hook,
+        )
     except msgspec.ValidationError:
         if not recursive:
             raise

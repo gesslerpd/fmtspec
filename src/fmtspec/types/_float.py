@@ -13,6 +13,7 @@ FLOAT64_SIZE = 8
 class Float:
     """IEEE 754 floating point type."""
 
+    # can use `sys.byteorder` for native byte order
     byteorder: Literal["little", "big"]
     size: Literal[4, 8]
     _struct: struct.Struct = field(init=False, repr=False, compare=False)

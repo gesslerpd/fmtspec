@@ -9,16 +9,16 @@ from ._int import Int as Int
 # all "u8" variants are the same (export for consistency)
 
 # big endian variants (shorthand)
-from ._int import u8 as u8, u16 as u16, u32 as u32, u64 as u64
-from ._int import i8 as i8, i16 as i16, i32 as i32, i64 as i64
+from ._int import u8 as u8, u16 as u16, u32 as u32, u64 as u64, u128 as u128
+from ._int import i8 as i8, i16 as i16, i32 as i32, i64 as i64, i128 as i128
 
 # big endian variants
-from ._int import u8be as u8be, u16be as u16be, u32be as u32be, u64be as u64be
-from ._int import i8be as i8be, i16be as i16be, i32be as i32be, i64be as i64be
+from ._int import u8be as u8be, u16be as u16be, u32be as u32be, u64be as u64be, u128be as u128be
+from ._int import i8be as i8be, i16be as i16be, i32be as i32be, i64be as i64be, i128be as i128be
 
 # little endian variants
-from ._int import u8le as u8le, u16le as u16le, u32le as u32le, u64le as u64le
-from ._int import i8le as i8le, i16le as i16le, i32le as i32le, i64le as i64le
+from ._int import u8le as u8le, u16le as u16le, u32le as u32le, u64le as u64le, u128le as u128le
+from ._int import i8le as i8le, i16le as i16le, i32le as i32le, i64le as i64le, i128le as i128le
 
 # float variants
 
