@@ -6,7 +6,7 @@ from ._float import Float as Float
 from ._int import Int as Int
 
 # int variants
-# all "u8" variants are the same (export for consistency)
+# all "u8/i8" variants are the same (export for consistency)
 
 # big endian variants (shorthand)
 from ._int import u8 as u8, u16 as u16, u32 as u32, u64 as u64, u128 as u128
