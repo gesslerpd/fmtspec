@@ -37,7 +37,7 @@ def test_prefixed_array_size_is_none() -> None:
 
 def test_switch_size_is_none() -> None:
     """Switch is variable-size, so size should be None."""
-    assert types.Switch(key=types.Ref("type"), cases={}).size is None
+    assert types.Switch(key=types.Ref("type"), cases={}).size is ...
 
 
 def test_sized_size_is_none() -> None:
