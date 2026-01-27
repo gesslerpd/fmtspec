@@ -211,3 +211,56 @@ def test_encode_missing_key_raises() -> None:
         encode(obj, fmt)
 
     assert isinstance(exc_info.value.cause, KeyError)
+
+
+def test_sized_with_int_length_padding() -> None:
+    """Fixed int length should pad with `fill` and decode correctly."""
+
+    fmt = {"data": types.Sized(length=5, fmt=types.Bytes(size=3), fill=b"\x00")}
+    obj = {"data": b"abc"}
+
+    data = encode(obj, fmt)
+    assert data == b"abc\x00\x00"
+
+    result = decode(data, fmt)
+    assert result == obj
+
+    # can't use align with fixed int length
+    with pytest.raises(ValueError, match="align is not allowed with fixed int length"):
+        types.Sized(length=5, fmt=types.Bytes(size=3), fill=b"\x00", align=2)
+
+
+def test_sized_with_ref_align_and_fill() -> None:
+    """Ref-based length honors `align` and uses `fill` for padding."""
+
+    fmt = {
+        "len": types.u16,
+        "data": types.Sized(length=types.Ref("len"), fmt=types.Bytes(), align=4, fill=b"\xff"),
+    }
+    obj = {"len": 3, "data": b"abc"}
+
+    data = encode(obj, fmt)
+    assert data == b"\x00\x03abc\xff"
+
+    result = decode(data, fmt)
+    assert result == obj
+
+
+def test_sized_with_format_length_and_align_and_fill() -> None:
+    """Format-based length writes length, then honors `align` and `fill`."""
+
+    fmt = types.Sized(length=types.u8, fmt=types.Bytes(), align=2, fill=b"\x55")
+    obj = b"a"
+
+    data = encode(obj, fmt)
+    assert data == b"\x01a\x55"
+
+    result = decode(data, fmt)
+    assert result == obj
+
+    obj = b"ab"
+    data = encode(obj, fmt)
+    assert data == b"\x02ab"
+
+    result = decode(data, fmt)
+    assert result == obj

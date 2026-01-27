@@ -38,10 +38,11 @@ class TakeUntil:
                 raise EOFError("Unexpected end of stream while searching for terminator")
             buffer.extend(chunk)
 
-            if len(buffer) >= term_len and buffer[-term_len:] == term:
-                # found terminator
-                data = bytes(buffer[:-term_len])
-                return self.fmt.decode(BytesIO(data), **_)
+            if len(buffer) >= term_len:
+                with memoryview(buffer) as view:
+                    if view[-term_len:] == term:
+                        # found terminator
+                        return self.fmt.decode(BytesIO(view[:-term_len]), **_)
 
             if self.max_size is not None and len(buffer) > self.max_size:
                 raise ValueError("Terminator not found within max_size limit")

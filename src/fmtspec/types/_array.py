@@ -27,7 +27,7 @@ class Array:
     # dims may be static ints or string keys looked up from the current
     # parent context (e.g., sibling field names). When any dimension is a
     # context key the overall array size is dynamic (`...`).
-    dims: tuple[int | Ref | Type, ...]
+    dims: tuple[int | Type | Ref, ...]
 
     # post-init public
     size: Size = field(init=False)
@@ -157,7 +157,7 @@ class Array:
         return items
 
 
-def array(fmt: Format, dims: int | Ref | Type | Iterable[int | Ref | Type] = ()) -> Array:
+def array(fmt: Format, dims: int | Type | Ref | Iterable[int | Type | Ref] = ()) -> Array:
     """Helper that returns an `Array` instance for the given element format
     and dimensions. Mirrors the old helper but produces an efficient `Array`.
     """
