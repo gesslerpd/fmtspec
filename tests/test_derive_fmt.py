@@ -206,13 +206,13 @@ def test_msgspec_roundtrip():
 
 
 def test_decode_without_fmt_or_shape_raises():
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="Either fmt or shape must be provided"):
         decode(b"")
 
 
 def test_decode_stream_requires_fmt_or_shape():
     stream = BytesIO(b"")
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="Either fmt or shape must be provided"):
         decode_stream(stream)
 
 

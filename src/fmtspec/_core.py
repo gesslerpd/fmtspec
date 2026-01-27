@@ -174,7 +174,7 @@ def decode_stream[T](
     # derive format from the provided shape when not given
     if fmt is None:
         if shape is None:
-            raise TypeError("Either fmt or shape must be provided for decoding.")
+            raise ValueError("Either fmt or shape must be provided for decoding.")
         fmt = derive_fmt(shape)
     # FUTURE: reenable generic Annotated formats?
     # else:
@@ -227,10 +227,10 @@ def decode[T](
 ) -> T | Any:
     """Decode bytes into formatted object."""
     # do this here for greedy field preprocessing
-    # if fmt is None:
-    #     if shape is None:
-    #         raise TypeError("Either fmt or shape must be provided for decoding.")
-    #     fmt = derive_fmt(shape)
+    if fmt is None:
+        if shape is None:
+            raise ValueError("Either fmt or shape must be provided for decoding.")
+        fmt = derive_fmt(shape)
 
     # if isinstance(fmt, Mapping):
     #     # preprocess to detect greedy field and wrap in Sized with fixed length

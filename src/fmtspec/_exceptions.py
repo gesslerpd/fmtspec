@@ -30,7 +30,13 @@ class Error(Exception):
     inspect_node: InspectNode | None
 
     def __str__(self) -> str:
-        return f"{self._PREAMBLE} @ pos={self.stream.tell()} path={self.path}: {self.message}"
+        cur = self.stream.tell()
+        # if self.fmt is None:
+        #     end = ...
+        # else:
+        #     offset = sizeof(self.fmt)
+        #     end = (cur + offset) if isinstance(offset, int) else ...
+        return f"{self._PREAMBLE} @ [{cur}:...] {self.path}: {self.message}"
 
 
 class EncodeError(Error):
