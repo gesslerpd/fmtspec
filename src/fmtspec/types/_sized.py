@@ -68,5 +68,8 @@ class Sized:
         else:
             length = self.length.decode(stream, context=context)
         bounded_data = stream.read(length)
+        if len(bounded_data) != length:
+            raise ValueError(f"Expected {length} bytes, got {len(bounded_data)}")
+
         inner_stream = BytesIO(bounded_data)
         return _decode_stream(inner_stream, self.fmt, context=context)[0]

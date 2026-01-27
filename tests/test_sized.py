@@ -25,6 +25,18 @@ def test_prefixed_bytes_size_is_none() -> None:
     assert types.Sized(length=types.u16, fmt=types.Bytes()).size is ...
 
 
+def test_prefixed_bytes() -> None:
+    fmt = types.Sized(length=types.u16, fmt=types.Bytes())
+    obj = b"hello world"
+    data = encode(obj, fmt)
+    assert data == b"\x00\x0bhello world"
+    result = decode(data, fmt)
+    assert result == obj
+
+    with pytest.raises(DecodeError, match="Expected 5 bytes, got 3"):
+        decode(b"\x00\x05abc", fmt)
+
+
 def test_terminated_string_size_is_none() -> None:
     """TerminatedString is greedy, so size should be None."""
     assert types.TakeUntil(types.String(), b"\0").size is ...
