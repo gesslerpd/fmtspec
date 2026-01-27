@@ -16,3 +16,7 @@ class Str:
     def decode(self, stream: BinaryIO, **_: Any) -> str:
         # read fixed size or until EOS
         return stream.read(-1 if self.size is None else self.size).decode(self.encoding)
+
+
+str_ = str_utf8 = Str()
+str_ascii = Str(encoding="ascii")

@@ -1,7 +1,7 @@
 from ._array import Array as Array
 from ._array import array as array
 from ._bitfield import Bitfields as Bitfields, Bitfield as Bitfield
-from ._bytes import Bytes as Bytes
+from ._bytes import Bytes as Bytes, bytes_ as bytes_
 from ._float import Float as Float
 from ._int import Int as Int
 
@@ -37,7 +37,7 @@ from ._literal import Null as Null, null as null
 from ._optional import Optional as Optional
 from ._sized import Sized as Sized
 
-from ._str import Str as Str
+from ._str import Str as Str, str_ as str_, str_utf8 as str_utf8, str_ascii as str_ascii
 from ._switch import Switch as Switch
 from ._switch import TaggedUnion as TaggedUnion
 from ._takeuntil import TakeUntil as TakeUntil

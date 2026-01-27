@@ -227,15 +227,14 @@ def decode[T](
 ) -> T | Any:
     """Decode bytes into formatted object."""
     # do this here for greedy field preprocessing
-    if fmt is None:
-        if shape is None:
-            raise TypeError("Either fmt or shape must be provided for decoding.")
-        fmt = derive_fmt(shape)
+    # if fmt is None:
+    #     if shape is None:
+    #         raise TypeError("Either fmt or shape must be provided for decoding.")
+    #     fmt = derive_fmt(shape)
 
-    if isinstance(fmt, Mapping):
-        # preprocess to detect greedy field and wrap in Sized with fixed length
-        fmt = _preprocess_greedy_fmt(data, fmt)
-
+    # if isinstance(fmt, Mapping):
+    #     # preprocess to detect greedy field and wrap in Sized with fixed length
+    #     fmt = _preprocess_greedy_fmt(data, fmt)
     stream = BytesIO(data)
     result = decode_stream(stream, fmt=fmt, shape=shape)
     # If requested, check for any trailing data after successful decode

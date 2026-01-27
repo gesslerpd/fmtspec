@@ -23,3 +23,6 @@ class Bytes:
         if self.size is None:
             return stream.read()
         return stream.read(self.size)
+
+
+bytes_ = Bytes()
