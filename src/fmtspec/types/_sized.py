@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from .._stream import _decode_stream, _encode_stream
 from ._ref import Ref
@@ -25,16 +25,17 @@ class Sized:
     - a format/type: encode/decode the length using that format
     """
 
-    size: ClassVar[EllipsisType] = ...
-
     length: int | Type | Ref
     fmt: Format
     align: int | None = None
     fill: bytes = b"\x00"
+    size: int | EllipsisType = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.length, int) and self.align:
             raise ValueError("align is not allowed with fixed int length")
+
+        object.__setattr__(self, "size", self.length if isinstance(self.length, int) else ...)
 
     def _pad_len(self, length: int) -> int:
         if not self.align:

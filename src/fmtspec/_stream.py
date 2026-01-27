@@ -309,7 +309,17 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
             # preprocess to autodetect Bitfield inlays and build member->group map
             bitfields = _collect_bitfield_groups(fmt)
             bitfields_remaining = 0
+            greedy_fmts = {}
+
             for key, field_fmt in fmt.items():
+                # use sizeof to recursively detect greedy fields?
+                if getattr(field_fmt, "size", ...) is None:
+                    greedy_fmts[key] = field_fmt
+                # detect consecutive greedy fields which would otherwise
+                # consume the remainder of the stream ambiguously
+                if len(greedy_fmts) > 1:
+                    raise ValueError("multiple greedy items in mapping format")
+
                 # if this key is part of a bitfield group
                 if key in bitfields:
                     bitfields_fmt = bitfields[key]

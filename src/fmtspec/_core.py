@@ -1,6 +1,7 @@
 import inspect
 import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
+from copy import copy
 from io import BytesIO
 from typing import Any, BinaryIO, assert_never, get_type_hints, overload
 
@@ -9,7 +10,7 @@ import msgspec
 from ._exceptions import DecodeError, EncodeError
 from ._protocol import Context, Format
 from ._stream import _decode_stream, _encode_stream
-from ._utils import derive_fmt
+from ._utils import derive_fmt, sizeof
 
 # types for msgspec to preserve during to_builtin / convert calls
 # FUTURE: allow disabling to_builtins call so advanced users can call themselves?
@@ -225,6 +226,16 @@ def decode[T](
     data: Buffer, fmt: Format | None = None, *, shape: type[T] | None = None, strict: bool = False
 ) -> T | Any:
     """Decode bytes into formatted object."""
+    # do this here for greedy field preprocessing
+    if fmt is None:
+        if shape is None:
+            raise TypeError("Either fmt or shape must be provided for decoding.")
+        fmt = derive_fmt(shape)
+
+    if isinstance(fmt, Mapping):
+        # preprocess to detect greedy field and wrap in Sized with fixed length
+        fmt = _preprocess_greedy_fmt(data, fmt)
+
     stream = BytesIO(data)
     result = decode_stream(stream, fmt=fmt, shape=shape)
     # If requested, check for any trailing data after successful decode
@@ -244,3 +255,40 @@ def decode[T](
                 inspect_node=None,
             )
     return result
+
+
+def _preprocess_greedy_fmt(data, fmt):
+    greedy_fmt_key = None
+    pre_size = 0
+    post_size = 0
+
+    for key, field_fmt in fmt.items():
+        size = sizeof(field_fmt)
+
+        if isinstance(size, int):
+            if greedy_fmt_key is None:
+                pre_size += size
+            else:
+                post_size += size
+        elif size is None:
+            # FUTURE: both greedy / dynamic formats can be wrapped in Sized to limit their size?
+            if greedy_fmt_key is not None:
+                # clear so we know there's multiple greedy fields
+                greedy_fmt_key = None
+                break
+            greedy_fmt_key = key
+        else:
+            # for now, give up if there's a dynamic size format
+            # dynamic size - cannot preprocess
+            greedy_fmt_key = None
+            break
+
+    if greedy_fmt_key is not None:
+        from .types import Sized  # noqa: PLC0415
+
+        fmt = copy(fmt)
+        fixed_size = len(data) - pre_size - post_size
+        if fixed_size < 0:
+            raise ValueError("Data is smaller than expected fixed-size fields")
+        fmt[greedy_fmt_key] = Sized(fixed_size, fmt[greedy_fmt_key])
+    return fmt

@@ -36,6 +36,11 @@ def test_prefixed_bytes() -> None:
     with pytest.raises(DecodeError, match="Expected 5 bytes, got 3"):
         decode(b"\x00\x05abc", fmt)
 
+    data = encode(obj, types.Sized(length=len(data), fmt=fmt))
+    assert data == b"\x00\x0bhello world"
+    result = decode(data, fmt)
+    assert result == obj
+
 
 def test_terminated_string_size_is_none() -> None:
     """TerminatedString is greedy, so size should be None."""
@@ -63,6 +68,21 @@ def test_decode_simple() -> None:
     fmt = {
         "length": types.u16,
         "data": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
+    }
+
+    # length=5, then 5 bytes of data, then extra byte that should not be read
+    data = b"\x00\x05hello\xff"
+    result = decode(data, fmt)
+
+    assert result == {"length": 5, "data": b"hello"}
+
+
+def test_decode_nested() -> None:
+    fmt = {
+        "length": types.u16,
+        "data": types.Sized(
+            length=5, fmt=types.Sized(length=types.Ref("length"), fmt=types.Bytes())
+        ),
     }
 
     # length=5, then 5 bytes of data, then extra byte that should not be read
@@ -216,8 +236,10 @@ def test_encode_missing_key_raises() -> None:
 def test_sized_with_int_length_padding() -> None:
     """Fixed int length should pad with `fill` and decode correctly."""
 
-    fmt = {"data": types.Sized(length=5, fmt=types.Bytes(size=3), fill=b"\x00")}
+    fmt = {"data": types.Sized(length=5, fmt=types.Bytes(size=3))}
     obj = {"data": b"abc"}
+
+    assert fmt["data"].size == 5
 
     data = encode(obj, fmt)
     assert data == b"abc\x00\x00"
@@ -227,7 +249,7 @@ def test_sized_with_int_length_padding() -> None:
 
     # can't use align with fixed int length
     with pytest.raises(ValueError, match="align is not allowed with fixed int length"):
-        types.Sized(length=5, fmt=types.Bytes(size=3), fill=b"\x00", align=2)
+        types.Sized(length=5, fmt=types.Bytes(size=3), align=2)
 
 
 def test_sized_with_ref_align_and_fill() -> None:
@@ -241,6 +263,22 @@ def test_sized_with_ref_align_and_fill() -> None:
 
     data = encode(obj, fmt)
     assert data == b"\x00\x03abc\xff"
+
+    result = decode(data, fmt)
+    assert result == obj
+
+    obj = {"len": 4, "data": b"abcd"}
+
+    data = encode(obj, fmt)
+    assert data == b"\x00\x04abcd"
+
+    result = decode(data, fmt)
+    assert result == obj
+
+    obj = {"len": 5, "data": b"abcde"}
+
+    data = encode(obj, fmt)
+    assert data == b"\x00\x05abcde\xff\xff\xff"
 
     result = decode(data, fmt)
     assert result == obj
