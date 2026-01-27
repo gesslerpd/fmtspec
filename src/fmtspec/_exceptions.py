@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 if TYPE_CHECKING:
     from ._protocol import Format, InspectNode
 
 
-@dataclass(slots=True)
+@dataclass(slots=True, kw_only=True)
 class Error(Exception):
     """Base class for all encoding/decoding errors.
 
@@ -19,7 +19,10 @@ class Error(Exception):
         inspect_node: Optional partial inspection tree showing state at time of error.
     """
 
+    _PREAMBLE = "Error"
+
     message: str
+    stream: BinaryIO
     fmt: Format | None
     context: Any
     cause: Exception | None
@@ -27,14 +30,16 @@ class Error(Exception):
     inspect_node: InspectNode | None
 
     def __str__(self) -> str:
-        return self.message
+        return f"{self._PREAMBLE} @ pos={self.stream.tell()} path={self.path}: {self.message}"
 
 
-@dataclass(slots=True)
 class EncodeError(Error):
     """Raised when an error occurs during encoding."""
 
+    _PREAMBLE = "Error encoding"
 
-@dataclass(slots=True)
+
 class DecodeError(Error):
     """Raised when an error occurs during decoding."""
+
+    _PREAMBLE = "Error decoding"

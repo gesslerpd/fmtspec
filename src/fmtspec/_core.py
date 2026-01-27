@@ -145,7 +145,8 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
         raise
     except Exception as e:
         raise EncodeError(
-            message=f"Error encoding: {e}",
+            message=repr(e),
+            stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
             cause=e,
@@ -186,7 +187,8 @@ def decode_stream[T](
         raise
     except Exception as e:
         raise DecodeError(
-            message=f"Error decoding: {e}",
+            message=repr(e),
+            stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
             cause=e,
@@ -208,13 +210,37 @@ def encode(obj: Any, fmt: Format | None = None) -> bytes:
 
 
 @overload
-def decode[T](data: Buffer, fmt: Format | None = None, *, shape: type[T]) -> T: ...
+def decode[T](
+    data: Buffer, fmt: Format | None = None, *, shape: type[T], strict: bool = False
+) -> T: ...
 
 
 @overload
-def decode(data: Buffer, fmt: Format | None = None, *, shape: None = None) -> Any: ...
+def decode(
+    data: Buffer, fmt: Format | None = None, *, shape: None = None, strict: bool = False
+) -> Any: ...
 
 
-def decode[T](data: Buffer, fmt: Format | None = None, *, shape: type[T] | None = None) -> T | Any:
+def decode[T](
+    data: Buffer, fmt: Format | None = None, *, shape: type[T] | None = None, strict: bool = False
+) -> T | Any:
     """Decode bytes into formatted object."""
-    return decode_stream(BytesIO(data), fmt=fmt, shape=shape)
+    stream = BytesIO(data)
+    result = decode_stream(stream, fmt=fmt, shape=shape)
+    # If requested, check for any trailing data after successful decode
+    if strict:
+        cur = stream.tell()
+        end = stream.seek(0, 2)
+        stream.seek(cur)
+        remaining = end - cur
+        if remaining:
+            raise DecodeError(
+                message=f"Excess data after decoding ({remaining} bytes)",
+                stream=stream,
+                fmt=fmt,
+                context=result,
+                cause=None,
+                path=(),
+                inspect_node=None,
+            )
+    return result

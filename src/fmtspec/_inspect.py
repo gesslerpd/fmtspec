@@ -62,7 +62,8 @@ def _encode_inspect_stream(obj: Any, stream: BinaryIO, fmt: Format) -> InspectNo
         raise
     except Exception as e:
         raise EncodeError(
-            message=f"Error encoding: {e}",
+            message=repr(e),
+            stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
             cause=e,
@@ -132,7 +133,8 @@ def _decode_inspect_stream[T](
         raise
     except Exception as e:
         raise DecodeError(
-            message=f"Error decoding: {e}",
+            message=repr(e),
+            stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
             cause=e,
