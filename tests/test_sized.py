@@ -102,6 +102,27 @@ def test_encode_simple() -> None:
     assert data == b"\x00\x05hello"
 
 
+@pytest.mark.xfail(strict=True, raises=EncodeError)
+def test_encode_autopopulate() -> None:
+    # FUTURE: support auto-populating length keys during encode?
+    # implement some generic solution to do this, requires backreferencing items higher in context
+    fmt = {
+        "_data_len": types.u16,
+        "other": types.u8,
+        "data": types.Sized(length=types.Ref("_data_len"), fmt=types.Bytes()),
+    }
+
+    obj = {"other": 0xFF, "data": b"hello"}
+    obj_with_length = obj | {"_data_len": 5}
+
+    data = encode(obj, fmt)
+
+    assert data == encode(obj_with_length, fmt) == b"\x00\x05\xffhello"
+
+    result = decode(data, fmt)
+    assert result == obj_with_length
+
+
 def test_encode_with_inner_format() -> None:
     """Sized should encode inner format and verify length."""
 
