@@ -18,3 +18,14 @@ def test_roundtrip():
 
     result = decode(data, fmt)
     assert result == obj
+
+
+FMT = [types.TakeUntil(typ, b",") for typ in (types.Bytes(), types.String())]
+
+
+def test_takeuntil_variants():
+    obj = [b"first", "second"]
+    data = encode(obj, FMT)
+    assert data == b"first,second,"
+    result = decode(data, FMT)
+    assert result == obj
