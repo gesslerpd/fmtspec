@@ -20,7 +20,7 @@ def test_roundtrip():
     assert result == obj
 
 
-FMT = [types.TakeUntil(typ, b",") for typ in (types.Bytes(), types.String())]
+FMT = [types.TakeUntil(typ, b",") for typ in (types.Bytes(), types.Str())]
 
 
 def test_takeuntil_variants():

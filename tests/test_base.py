@@ -4,7 +4,7 @@ from fmtspec import decode, encode, types
 def test_roundtrip():
     obj = {"key": "value", "number": 42}
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 

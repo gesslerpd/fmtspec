@@ -4,7 +4,7 @@ from fmtspec import decode, encode, types
 def test_roundtrip():
     obj = ["value", 42]
     fmt = [
-        types.TakeUntil(types.String(), b"\0"),
+        types.TakeUntil(types.Str(), b"\0"),
         types.Int(byteorder="little", signed=False, size=4),
     ]
 
@@ -19,7 +19,7 @@ def test_roundtrip():
 def test_iterable():
     obj = ("value", 42)
     fmt = (
-        types.TakeUntil(types.String(), b"\0"),
+        types.TakeUntil(types.Str(), b"\0"),
         types.Int(byteorder="little", signed=False, size=4),
     )
 

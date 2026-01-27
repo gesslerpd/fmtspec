@@ -37,7 +37,7 @@ from ._literal import Null as Null, null as null
 from ._optional import Optional as Optional
 from ._sized import Sized as Sized
 
-from ._str import String as String
+from ._str import Str as Str
 from ._switch import Switch as Switch
 from ._switch import TaggedUnion as TaggedUnion
 from ._takeuntil import TakeUntil as TakeUntil

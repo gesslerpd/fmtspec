@@ -3,7 +3,7 @@ from typing import Any, BinaryIO
 
 
 @dataclass(frozen=True, slots=True)
-class String:
+class Str:
     size: int | None = None
     encoding: str = "utf-8"
 
@@ -14,6 +14,5 @@ class String:
         stream.write(data)
 
     def decode(self, stream: BinaryIO, **_: Any) -> str:
-        if self.size is None:
-            return stream.read().decode(self.encoding)
-        return stream.read(self.size).decode(self.encoding)
+        # read fixed size or until EOS
+        return stream.read(-1 if self.size is None else self.size).decode(self.encoding)

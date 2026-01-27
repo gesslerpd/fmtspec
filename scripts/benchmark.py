@@ -31,7 +31,7 @@ from test_msgpack import MsgPack
 msgpack_fmt = MsgPack()
 
 INT_FMT = types.u32le
-STR_FMT = types.TakeUntil(types.String(), b"\0")
+STR_FMT = types.TakeUntil(types.Str(), b"\0")
 
 
 @dataclass(slots=True)

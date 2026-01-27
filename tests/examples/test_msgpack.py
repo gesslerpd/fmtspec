@@ -49,9 +49,9 @@ MAP32 = 0xDF
 # =============================================================================
 
 # Length-prefixed string/binary body formats (after the tag)
-str8 = types.Sized(length=types.u8, fmt=types.String())
-str16 = types.Sized(length=types.u16, fmt=types.String())
-str32 = types.Sized(length=types.u32, fmt=types.String())
+str8 = types.Sized(length=types.u8, fmt=types.Str())
+str16 = types.Sized(length=types.u16, fmt=types.Str())
+str32 = types.Sized(length=types.u32, fmt=types.Str())
 bin8 = types.Sized(length=types.u8, fmt=types.Bytes())
 bin16 = types.Sized(length=types.u16, fmt=types.Bytes())
 bin32 = types.Sized(length=types.u32, fmt=types.Bytes())

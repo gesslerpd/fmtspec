@@ -266,7 +266,7 @@ class TestRoundtrip:
     def test_encode_inspect_matches_encode(self):
         """Verify encode_inspect produces the same bytes as encode."""
         fmt = {
-            "name": types.TakeUntil(types.String(), b"\0"),
+            "name": types.TakeUntil(types.Str(), b"\0"),
             "value": types.Int(byteorder="little", signed=False, size=4),
         }
         obj = {"name": "test", "value": 42}
@@ -279,7 +279,7 @@ class TestRoundtrip:
     def test_decode_inspect_matches_decode(self):
         """Verify decode_inspect produces the same result as decode."""
         fmt = {
-            "name": types.TakeUntil(types.String(), b"\0"),
+            "name": types.TakeUntil(types.Str(), b"\0"),
             "value": types.Int(byteorder="little", signed=False, size=4),
         }
         data = b"test\0\x2a\x00\x00\x00"

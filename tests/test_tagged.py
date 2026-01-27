@@ -9,7 +9,7 @@ from fmtspec import DecodeError, EncodeError, decode, encode, types
 @dataclass
 class DataclassExample:
     value: Annotated[int, types.u8]
-    name: Annotated[str, types.String(4)]
+    name: Annotated[str, types.Str(4)]
 
 
 def test_tagged_union() -> None:

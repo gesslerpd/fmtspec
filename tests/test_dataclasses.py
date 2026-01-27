@@ -42,7 +42,7 @@ class NestedDataClass:
 def test_roundtrip():
     obj = ExampleDataClass(key="value", number=NumberEnum.EVERYTHING)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -58,7 +58,7 @@ def test_nested():
     obj = NestedDataClass(inner=ExampleDataClass(key="value", number=42), flag=1)
     fmt = {
         "inner": {
-            "key": types.TakeUntil(types.String(), b"\0"),
+            "key": types.TakeUntil(types.Str(), b"\0"),
             "number": types.Int(byteorder="little", signed=False, size=4),
         },
         "flag": types.Int(byteorder="big", signed=False, size=2),
@@ -77,7 +77,7 @@ def test_partial_nested():
     partial_obj = {"inner": ExampleDataClass(key="value", number=42), "flag": 1}
     fmt = {
         "inner": {
-            "key": types.TakeUntil(types.String(), b"\0"),
+            "key": types.TakeUntil(types.Str(), b"\0"),
             "number": types.Int(byteorder="little", signed=False, size=4),
         },
         "flag": types.Int(byteorder="big", signed=False, size=2),
@@ -100,7 +100,7 @@ class DataClassWithDefaults:
 def test_defaults():
     obj = DataClassWithDefaults(key="value")
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4),
     }
 
@@ -115,7 +115,7 @@ def test_defaults():
 def test_partial_fmt():
     obj = DataClassWithDefaults(key="value")
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
     }
 
     data = encode(obj, fmt)
@@ -129,7 +129,7 @@ def test_partial_fmt():
 def test_strict_enum():
     obj = StrictEnum(key="value", number=42)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
     }
     data = encode(obj, fmt)
@@ -140,7 +140,7 @@ def test_strict_enum():
 
     obj = StrictEnum(key="value", number=NumberEnum.EVERYTHING)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
     }
     data = encode(obj, fmt)
@@ -153,7 +153,7 @@ def test_strict_enum():
 def test_strict_flag():
     obj = StrictFlag(key="value", number=Permission.READ | Permission.WRITE)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
     }
     data = encode(obj, fmt)
@@ -166,7 +166,7 @@ def test_strict_flag():
 def test_unstrict_enum():
     obj = StrictEnum(key="value", number=NumberEnum.EVERYTHING)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
     }
     data = encode(obj, fmt)
@@ -177,7 +177,7 @@ def test_unstrict_enum():
 
     obj = StrictFlag(key="value", number=0)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
     }
     data = encode(obj, fmt)
@@ -188,7 +188,7 @@ def test_unstrict_enum():
 
     obj = StrictEnum(key="value", number=8)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=NumberEnum),
     }
     data = encode(obj, fmt)
@@ -201,7 +201,7 @@ def test_unstrict_enum():
 def test_unstrict_flag():
     obj = StrictFlag(key="value", number=Permission.READ | Permission.WRITE)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
     }
     data = encode(obj, fmt)
@@ -212,7 +212,7 @@ def test_unstrict_flag():
 
     obj = StrictFlag(key="value", number=Permission(0))
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
     }
     data = encode(obj, fmt)
@@ -223,7 +223,7 @@ def test_unstrict_flag():
 
     obj = StrictFlag(key="value", number=8)
     fmt = {
-        "key": types.TakeUntil(types.String(), b"\0"),
+        "key": types.TakeUntil(types.Str(), b"\0"),
         "number": types.Int(byteorder="little", signed=False, size=4, enum=Permission),
     }
     data = encode(obj, fmt)
