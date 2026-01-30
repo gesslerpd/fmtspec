@@ -1,3 +1,5 @@
+import math
+
 import pytest
 
 from fmtspec import EncodeError, decode, encode, types
@@ -253,3 +255,39 @@ def test_image():
     )
     res = decode(data, fmt)
     assert res == obj
+
+
+def test_array_of_float32_roundtrip():
+    arr = types.array(types.f32, 3)
+    obj = [1.0, 2.0, 3.0]
+    data = encode(obj, arr)
+    assert len(data) == len(obj) * 4
+    res = decode(data, arr)
+    assert all(math.isclose(a, b, rel_tol=1e-6) for a, b in zip(res, obj))
+
+
+def test_array_of_float64_roundtrip():
+    arr = types.array(types.f64, 3)
+    obj = [1.0, 2.0, 3.0]
+    data = encode(obj, arr)
+    assert len(data) == len(obj) * 8
+    res = decode(data, arr)
+    assert all(math.isclose(a, b, rel_tol=1e-12) for a, b in zip(res, obj))
+
+
+def test_array_of_float32le_roundtrip():
+    arr = types.array(types.f32le, 3)
+    obj = [1.0, 2.0, 3.0]
+    data = encode(obj, arr)
+    assert len(data) == len(obj) * 4
+    res = decode(data, arr)
+    assert all(math.isclose(a, b, rel_tol=1e-6) for a, b in zip(res, obj))
+
+
+def test_array_of_float64le_roundtrip():
+    arr = types.array(types.f64le, 3)
+    obj = [1.0, 2.0, 3.0]
+    data = encode(obj, arr)
+    assert len(data) == len(obj) * 8
+    res = decode(data, arr)
+    assert all(math.isclose(a, b, rel_tol=1e-12) for a, b in zip(res, obj))

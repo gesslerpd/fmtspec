@@ -134,6 +134,8 @@ def main() -> None:
         "score": 95.5,
         "tags": ["admin", "user"],
         "payload": "x" * 200,
+        "data": list(range(10)),
+        "data_float": [i + 0.333 for i in range(10)],
     }
     payload = {"records": [base] * 200}
 
