@@ -12,8 +12,7 @@ import tempfile
 import time
 from typing import TYPE_CHECKING, cast
 
-from fmtspec import decode, decode_stream, encode, encode_stream
-from fmtspec.types import Array, Int
+from fmtspec import decode, decode_stream, encode, encode_stream, types
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,8 +53,8 @@ def main() -> None:
     iters = 2000
 
     # 32-bit unsigned little-endian integers
-    elem_fmt = Int("little", False, 4)
-    arr_fmt = Array(elem_fmt, (rows, cols))
+    elem_fmt = types.u32le
+    arr_fmt = types.Array(elem_fmt, (rows, cols))
 
     value = make_array(0, (rows, cols))
 

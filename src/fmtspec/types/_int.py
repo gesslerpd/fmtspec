@@ -45,7 +45,7 @@ class Int:
                 format_str = format_str.lower()
             object.__setattr__(self, "_struct", Struct(format_str))
         else:
-            # slower fallback for large integers
+            # less performant fallback for large integers
             object.__setattr__(self, "_struct", _Struct(self.byteorder, self.signed, self.size))
 
     def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
