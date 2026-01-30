@@ -164,8 +164,8 @@ class Array:
         fast_bomismatch = False
         fast_elem_size: int | None = None
 
-        # TODO: quickly flatten multi-dimensional arrays of ints on encode?
-        # unflatten on decode?
+        # TODO: quickly flatten all multi-dimensional arrays encode regardless of element type?
+        # and then also unflatten on decode? May increase the performance for all element types.
 
         # Fast-path for single-dimension or greedy arrays of simple C types
         if isinstance(self.element_fmt, (Int, Float)):
