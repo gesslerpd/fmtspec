@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -100,7 +102,7 @@ def test_convert_recursive():
         "data_class": {"key": "value1", "number": 1},
         "standard_class": {"key": "value2", "number": 2},
     }
-    instance = _convert(data, NestedExample)
+    instance = _convert(data, NestedExample, recursive=True)
 
     assert instance.data_class.key == "value1"
     assert instance.data_class.number == 1
@@ -113,9 +115,38 @@ def test_to_builtins_recursive():
         data_class=DataclassExample(key="value1", number=1),
         standard_class=StandardClassExample(key="value2", number=2),
     )
-    data = _to_builtins(obj)
+    data = _to_builtins(obj, recursive=True)
 
     assert data["data_class"]["key"] == "value1"
     assert data["data_class"]["number"] == 1
     assert data["standard_class"]["key"] == "value2"
     assert data["standard_class"]["number"] == 2
+
+
+@dataclass
+class SpecialExample:
+    key: str
+    number: int
+
+    @classmethod
+    def from_builtins(cls, data: dict) -> SpecialExample:
+        key, number = data["nested"]
+        return cls(key, number)
+
+    def to_builtins(self) -> dict:
+        return {"nested": (self.key, self.number)}
+
+
+# remove dataclass fields after creation so msgspec sees it as standard class
+del SpecialExample.__dataclass_fields__
+
+
+def test_to_builtins_special():
+    obj = SpecialExample(key="value", number=42)
+    data = _to_builtins(obj, recursive=False)
+
+    assert data == {"nested": ("value", 42)}
+
+    result = _convert(data, SpecialExample, recursive=False)
+    assert result == obj
+    assert isinstance(result, SpecialExample)

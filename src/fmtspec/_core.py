@@ -22,6 +22,11 @@ BUILTIN_TYPES = (
     # ... add more as needed
 )
 
+INT_CONVERTIBLE_TYPES = (
+    ipaddress.IPv4Address,
+    ipaddress.IPv6Address,
+)
+
 
 def _create_new_instance[T](cls: type[T], data: dict[str, Any]) -> T:
     instance = cls.__new__(cls)
@@ -61,7 +66,11 @@ def _create_new_instance[T](cls: type[T], data: dict[str, Any]) -> T:
 
 
 def _msgspec_encode_hook(obj: Any) -> Any:
-    if isinstance(obj, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+    if hasattr(obj, "to_builtins") and callable(obj.to_builtins):
+        obj = obj.to_builtins()
+    elif hasattr(obj, "__int__") and callable(obj.__int__):
+        # generically support types convertable to int? use INT_CONVERTIBLE_TYPES?
+        # if isinstance(obj, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
         obj = int(obj)
     else:
         raise TypeError(f"Unsupported type for encoding hook: {type(obj)} ({obj})")
@@ -69,14 +78,18 @@ def _msgspec_encode_hook(obj: Any) -> Any:
 
 
 def _msgspec_decode_hook(cls: type, obj: Any) -> Any:
-    if issubclass(cls, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
+    if hasattr(cls, "from_builtins") and callable(cls.from_builtins):
+        obj = cls.from_builtins(obj)
+    elif hasattr(cls, "__int__") and callable(cls.__int__) and isinstance(obj, int):
+        # generically support types constructible from int? use INT_CONVERTIBLE_TYPES?
+        # if issubclass(cls, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
         obj = cls(obj)
     else:
         raise TypeError(f"Unsupported type for decoding hook: {cls} ({obj})")
     return obj
 
 
-def _to_builtins(obj: Any, recursive: bool = True) -> Any:
+def _to_builtins(obj: Any, recursive: bool) -> Any:
     try:
         return msgspec.to_builtins(
             obj,
@@ -95,7 +108,7 @@ def _to_builtins(obj: Any, recursive: bool = True) -> Any:
     return obj
 
 
-def _convert[T](obj: Any, shape: type[T], recursive: bool = True) -> T:
+def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
     try:
         return msgspec.convert(
             obj,
