@@ -23,12 +23,15 @@ class Sized:
     - an `int`: fixed-size (pad to that size with `fill`)
     - a `Ref`: read sibling value from `context` (no length header written)
     - a format/type: encode/decode the length using that format
+
+    `factor` multiplies the decoded length to get byte count (e.g., factor=2 for word count).
     """
 
     length: int | Type | Ref
     fmt: Format
     align: int | None = None
     fill: bytes = b"\x00"
+    factor: int = 1
     size: int | EllipsisType = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -82,7 +85,9 @@ class Sized:
             return
 
         # length is a format/type: write length first
-        self.length.encode(n, stream, context=context)
+        if n % self.factor != 0:
+            raise ValueError(f"Encoded length {n} is not divisible by factor {self.factor}")
+        self.length.encode(n // self.factor, stream, context=context)
         stream.write(encoded)
         pad = self._pad_len(n)
         if pad:
@@ -113,7 +118,7 @@ class Sized:
             return inner
 
         # length is a format: decode it from stream, then read that many bytes
-        length = self.length.decode(stream, context=context)
+        length = self.length.decode(stream, context=context) * self.factor
         data = stream.read(length)
         if len(data) != length:
             raise ValueError(f"Expected {length} bytes, got {len(data)}")

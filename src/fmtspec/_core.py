@@ -22,6 +22,24 @@ BUILTIN_TYPES = (
     # ... add more as needed
 )
 
+# Types that should be completely preserved (not converted to dicts by msgspec)
+# These are types with custom encode methods that handle their own serialization
+PRESERVED_TYPES: list[type] = []
+
+
+def register_builtin_type(cls: type) -> None:
+    """Register a type to be preserved during to_builtins conversion.
+
+    Types registered here won't be converted to dicts by msgspec.to_builtins.
+    This is useful for custom types that implement their own encode/decode methods.
+
+    Note: This only affects _to_builtins, not _convert. These types are preserved
+    during encoding but should be handled by their own encode methods.
+    """
+    if cls not in PRESERVED_TYPES:
+        PRESERVED_TYPES.append(cls)
+
+
 INT_CONVERTIBLE_TYPES = (
     ipaddress.IPv4Address,
     ipaddress.IPv6Address,
@@ -89,13 +107,86 @@ def _msgspec_decode_hook(cls: type, obj: Any) -> Any:
     return obj
 
 
+def _preserve_types(obj: Any) -> Any:
+    """Recursively preserve registered types in collections.
+
+    This function walks through lists/tuples and replaces items that would
+    otherwise be converted to dicts by msgspec.to_builtins.
+    """
+    if not PRESERVED_TYPES:
+        return obj
+
+    preserved_tuple = tuple(PRESERVED_TYPES)
+
+    if isinstance(obj, preserved_tuple):
+        # Already a preserved type, return as-is
+        return obj
+    elif isinstance(obj, list):
+        # Check if any items are preserved types
+        result = []
+        for item in obj:
+            if isinstance(item, preserved_tuple):
+                result.append(item)
+            else:
+                result.append(_preserve_types(item))
+        return result
+    elif isinstance(obj, tuple):
+        return tuple(_preserve_types(item) for item in obj)
+    elif isinstance(obj, dict):
+        return {k: _preserve_types(v) for k, v in obj.items()}
+    return obj
+
+
 def _to_builtins(obj: Any, recursive: bool) -> Any:
+    # First, extract any preserved types from collections
+    # These will be kept as-is while the rest is converted
+    # preserved_items: list[tuple[list[int], Any]] = []
+
+    # def extract_preserved(o: Any, path: list[int]) -> Any:
+    #     """Extract preserved types from nested structure, replacing with placeholders."""
+    #     if not PRESERVED_TYPES:
+    #         return o
+
+    #     preserved_tuple = tuple(PRESERVED_TYPES)
+
+    #     if isinstance(o, preserved_tuple):
+    #         # Mark this position for later restoration
+    #         preserved_items.append((list(path), o))
+    #         # Return a placeholder dict that won't cause issues
+    #         return {"__preserved_index__": len(preserved_items) - 1}
+    #     elif isinstance(o, list):
+    #         return [extract_preserved(item, [*path, i]) for i, item in enumerate(o)]
+    #     elif isinstance(o, tuple):
+    #         return tuple(extract_preserved(item, [*path, i]) for i, item in enumerate(o))
+    #     elif isinstance(o, dict):
+    #         return {k: extract_preserved(v, path) for k, v in o.items()}
+    #     return o
+
+    # def restore_preserved(o: Any) -> Any:
+    #     """Restore preserved types from placeholders."""
+    #     if isinstance(o, dict) and "__preserved_index__" in o:
+    #         idx = o["__preserved_index__"]
+    #         return preserved_items[idx][1]
+    #     elif isinstance(o, list):
+    #         return [restore_preserved(item) for item in o]
+    #     elif isinstance(o, tuple):
+    #         return tuple(restore_preserved(item) for item in o)
+    #     elif isinstance(o, dict):
+    #         return {k: restore_preserved(v) for k, v in o.items()}
+    #     return o
+
+    # # Extract preserved types before conversion
+    # obj_with_placeholders = extract_preserved(obj, [])
+
     try:
-        return msgspec.to_builtins(
+        result = msgspec.to_builtins(
             obj,
             builtin_types=BUILTIN_TYPES,
             enc_hook=None if recursive else _msgspec_encode_hook,
         )
+        return result
+        # Restore preserved types after conversion
+        # return restore_preserved(result)
     except TypeError:
         if not recursive:
             raise

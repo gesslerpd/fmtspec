@@ -44,3 +44,33 @@ from ._takeuntil import TakeUntil as TakeUntil
 
 # non-Type symbols often used in formats (FUTURE: move these to top-level?)
 from ._ref import Ref as Ref
+
+# CIP (Common Industrial Protocol) types
+from ._cip import (
+    # Format types (fmtspec Type protocol compliant)
+    CIPSegmentFmt as CIPSegmentFmt,
+    # Convenience format instances
+    cip_segment as cip_segment,
+    cip_segment_padded as cip_segment_padded,
+    epath_packed as epath_packed,
+    epath_padded as epath_padded,
+    epath_padded_len as epath_padded_len,
+    epath_padded_pad_len as epath_padded_pad_len,
+    # Segment value classes
+    CIPSegment as CIPSegment,
+    PortSegment as PortSegment,
+    LogicalSegment as LogicalSegment,
+    NetworkSegment as NetworkSegment,
+    SymbolicSegment as SymbolicSegment,
+    # Segment type enums
+    SegmentType as SegmentType,
+    LogicalSegmentType as LogicalSegmentType,
+    LogicalFormat as LogicalFormat,
+    NetworkSegmentType as NetworkSegmentType,
+    SymbolicSegmentExtendedFormat as SymbolicSegmentExtendedFormat,
+    # CIP integer type aliases (little-endian)
+    usint as usint,
+    uint as uint,
+    udint as udint,
+    ulint as ulint,
+)
