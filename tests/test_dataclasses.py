@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag, auto
 
-from fmtspec import decode, encode, types
+import pytest
+
+from fmtspec import ShapeError, decode, encode, types
 
 
 class NumberEnum(IntEnum):
@@ -148,6 +150,12 @@ def test_strict_enum():
     result = decode(data, fmt, shape=StrictEnum)
     assert result == obj
     assert result.number.name == "EVERYTHING"
+
+    # FUTURE: should this error? right now doesn't error until decoding
+    encode(StrictEnum(key="value", number=1), fmt)
+
+    with pytest.raises(ShapeError, match="Invalid enum value 1"):
+        decode(b"value\0\x01\x00\x00\x00", fmt, shape=StrictEnum)
 
 
 def test_strict_flag():

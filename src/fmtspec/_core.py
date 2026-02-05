@@ -7,7 +7,7 @@ from typing import Any, BinaryIO, assert_never, get_type_hints, overload
 
 import msgspec
 
-from ._exceptions import DecodeError, EncodeError
+from ._exceptions import DecodeError, EncodeError, ShapeError
 from ._protocol import Context, Format
 from ._stream import _decode_stream, _encode_stream
 from ._utils import derive_fmt, sizeof
@@ -207,7 +207,7 @@ def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
             builtin_types=BUILTIN_TYPES,
             dec_hook=None if recursive else _msgspec_decode_hook,
         )
-    except msgspec.ValidationError:
+    except msgspec.DecodeError:
         if not recursive:
             raise
         # handle (fmt, shape) pairs that have mismatched types?
@@ -313,7 +313,21 @@ def decode_stream[T](
     # perf: only recursively convert once as post-process operation
     if shape is not None:
         # FUTURE: enable recursive to support standard classes?
-        result = _convert(result, shape, recursive=False)
+        try:
+            result = _convert(result, shape, recursive=False)
+        except msgspec.DecodeError as e:
+            # FUTURE: rename ConvertError?
+            raise ShapeError(
+                message=f"Decoded object does not conform to expected shape {shape}: {e}",
+                obj=result,
+                stream=stream,
+                fmt=fmt,
+                # context empty here?
+                context=result,
+                cause=e,
+                path=(),
+                inspect_node=None,
+            ) from e
     return result
 
 

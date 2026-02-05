@@ -5,7 +5,7 @@ from typing import Annotated, ClassVar
 import msgspec
 import pytest
 
-from fmtspec import EncodeError, decode, decode_stream, derive_fmt, encode, types
+from fmtspec import EncodeError, ShapeError, decode, decode_stream, derive_fmt, encode, types
 
 INT_FMT = types.Int(byteorder="little", signed=False, size=4)
 STR_FMT = types.TakeUntil(types.Str(), b"\0")
@@ -260,7 +260,7 @@ def test_standard_class_roundtrip():
     assert result.sentinel is StandardClassExample.sentinel is obj.sentinel
 
 
-@pytest.mark.xfail(strict=True, raises=msgspec.ValidationError)
+@pytest.mark.xfail(strict=True, raises=ShapeError)
 def test_mismatch_type_roundtrip():
     # FUTURE: fallback for decode conversion with mismatched types?
     # would require disabling msgpack validation (warn of type mistmatch on derive_fmt?)

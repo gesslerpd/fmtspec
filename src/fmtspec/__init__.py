@@ -4,6 +4,7 @@ from ._core import decode as decode
 from ._core import decode_stream as decode_stream
 from ._core import encode as encode
 from ._core import encode_stream as encode_stream
+from ._exceptions import ShapeError as ShapeError
 from ._exceptions import DecodeError as DecodeError
 from ._exceptions import EncodeError as EncodeError
 from ._exceptions import Error as Error

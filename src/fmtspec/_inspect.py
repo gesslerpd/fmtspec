@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, assert_never, cast, overload
 import msgspec
 
 from ._core import _convert, _to_builtins
-from ._exceptions import DecodeError, EncodeError
+from ._exceptions import DecodeError, EncodeError, ShapeError
 from ._protocol import Context, Format, InspectNode
 from ._stream import BufferingStream, WriteBufferingStream, _decode_stream, _encode_stream
 
@@ -159,8 +159,21 @@ def _decode_inspect_stream[T](
 
     if shape is not None:
         # FUTURE: enable recursive to support standard classes?
-        result = _convert(result, shape, recursive=False)
-
+        try:
+            result = _convert(result, shape, recursive=False)
+        except msgspec.DecodeError as e:
+            # FUTURE: rename ConvertError?
+            raise ShapeError(
+                message=f"Decoded object does not conform to expected shape {shape}: {e}",
+                obj=result,
+                stream=stream,
+                fmt=fmt,
+                # context empty here?
+                context=result,
+                cause=e,
+                path=(),
+                inspect_node=ctx.inspect_node,
+            ) from e
     return result, tree
 
 

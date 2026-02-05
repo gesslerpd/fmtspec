@@ -37,6 +37,8 @@ class Error(Exception):
         # else:
         #     offset = sizeof(self.fmt)
         #     end = (cur + offset) if isinstance(offset, int) else ...
+        if self._PREAMBLE is None:
+            return f"{self.message}"
         return f"{self._PREAMBLE} @ [{cur}:...] {self.path}: {self.message}"
 
 
@@ -50,3 +52,9 @@ class DecodeError(Error):
     """Raised when an error occurs during decoding."""
 
     _PREAMBLE = "Error decoding"
+
+
+class ShapeError(DecodeError):
+    """Raised when a conversion error occurs during decoding for provided shape."""
+
+    _PREAMBLE = None
