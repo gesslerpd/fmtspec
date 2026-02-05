@@ -38,6 +38,7 @@ def sizeof(fmt: Format) -> Size:
     return total
 
 
+# cache for performance on repeated calls with the same class
 @cache
 def derive_fmt(cls: type) -> dict[str, Format]:
     """Derive format specification from a class with Annotated fields.

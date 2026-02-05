@@ -251,6 +251,7 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
     except Exception as e:
         raise EncodeError(
             message=repr(e),
+            obj=obj,
             stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
@@ -291,11 +292,20 @@ def decode_stream[T](
         assert_never(e)  # type: ignore
         raise
     except Exception as e:
+        # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
+        context = ctx.parents[-1]
+        obj = context
+        if shape is not None:
+            try:
+                obj = _convert(context, shape, recursive=False)
+            except msgspec.DecodeError:
+                pass
         raise DecodeError(
             message=repr(e),
+            obj=obj,
             stream=stream,
             fmt=ctx.fmt,
-            context=ctx.parents[-1],
+            context=context,
             cause=e,
             path=tuple(ctx.path),
             inspect_node=None,
@@ -350,8 +360,10 @@ def decode[T](
         if remaining:
             raise DecodeError(
                 message=f"Excess data after decoding ({remaining} bytes)",
+                obj=result,
                 stream=stream,
                 fmt=fmt,
+                # context empty here?
                 context=result,
                 cause=None,
                 path=(),

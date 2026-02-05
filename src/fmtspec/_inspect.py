@@ -10,6 +10,8 @@ from collections.abc import Buffer, Iterable, Iterator, Mapping
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, assert_never, cast, overload
 
+import msgspec
+
 from ._core import _convert, _to_builtins
 from ._exceptions import DecodeError, EncodeError
 from ._protocol import Context, Format, InspectNode
@@ -63,6 +65,7 @@ def _encode_inspect_stream(obj: Any, stream: BinaryIO, fmt: Format) -> InspectNo
     except Exception as e:
         raise EncodeError(
             message=repr(e),
+            obj=obj,
             stream=stream,
             fmt=ctx.fmt,
             context=ctx.parents[-1],
@@ -132,11 +135,20 @@ def _decode_inspect_stream[T](
         assert_never(e)  # type: ignore
         raise
     except Exception as e:
+        # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
+        context = ctx.parents[-1]
+        obj = context
+        if shape is not None:
+            try:
+                obj = _convert(context, shape, recursive=False)
+            except msgspec.DecodeError:
+                pass
         raise DecodeError(
             message=repr(e),
+            obj=obj,
             stream=stream,
             fmt=ctx.fmt,
-            context=ctx.parents[-1],
+            context=context,
             cause=e,
             path=tuple(ctx.path),
             inspect_node=ctx.inspect_node,
