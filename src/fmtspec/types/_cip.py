@@ -175,11 +175,13 @@ class CIPSegment(
         return super().__init_subclass__(*args)
 
     @classmethod
-    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
+    def encode(
+        cls, value: dict[str, Any], stream: BinaryIO, _padded: bool
+    ) -> None:  # pragma: no cover
         raise NotImplementedError
 
     @classmethod
-    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> Self:
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> Self:  # pragma: no cover
         raise NotImplementedError
 
 
@@ -208,7 +210,6 @@ class PortSegment(CIPSegment):
 
     @classmethod
     def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
-        """Encode port segment to stream."""
         # Determine port encoding
         port_value = value["port"]
         link_addr = value["link_address"]
@@ -217,18 +218,20 @@ class PortSegment(CIPSegment):
         link_bytes = _value_to_bytes(link_addr)
         ext_link = len(link_bytes) > 1
 
+        use_extended_port = port_value >= EXTENDED_PORT
+
         # Write header byte
         _port_header.encode(
             {
-                "port": port_value,
+                "port": EXTENDED_PORT if use_extended_port else port_value,
                 "ext_link": ext_link,
                 "segment_type": cls.TYPE,
             },
             stream,
         )
 
-        # Extended port if needed
-        if port_value == EXTENDED_PORT:
+        # Write extended port value if needed (16-bit port number)
+        if use_extended_port:
             uint.encode(port_value, stream)
 
         # Link address
@@ -242,7 +245,6 @@ class PortSegment(CIPSegment):
 
     @classmethod
     def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> PortSegment:
-        """Decode port segment from stream."""
         header = _port_header.decode_int(header_value)
         ext_link = header["ext_link"]
         port = header["port"]
@@ -311,8 +313,7 @@ class LogicalSegment(CIPSegment):
     value: int | bytes
 
     @classmethod
-    def encode(cls, value: dict[str, Any], stream: BinaryIO, padded: bool) -> None:
-        """Encode logical segment to stream."""
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
         # Get value bytes
         val = value["value"]
         type_ = value["type"]
@@ -332,13 +333,6 @@ class LogicalSegment(CIPSegment):
                 )
         elif type_ == LogicalSegmentType.type_special:
             raise ValueError("Logical segments with Special type are not supported")
-        elif fmt == LogicalFormat.format_32bit and type_ not in (
-            LogicalSegmentType.type_instance_id,
-            LogicalSegmentType.type_connection_point,
-        ):
-            raise ValueError(
-                "32-bit logical value only valid for Instance ID and Connection Point types"
-            )
 
         # Write header
         _logical_header.encode(
@@ -350,25 +344,17 @@ class LogicalSegment(CIPSegment):
             stream,
         )
 
-        # Pad byte for 16/32 bit formats in padded mode
-        if padded and fmt in (LogicalFormat.format_16bit, LogicalFormat.format_32bit):
+        # Pad byte for 16/32-bit formats (always required per CIP spec for word alignment)
+        if fmt in (LogicalFormat.format_16bit, LogicalFormat.format_32bit):
             stream.write(b"\x00")
 
         stream.write(value_bytes)
 
     @classmethod
-    def decode(cls, stream: BinaryIO, header_value: int, padded: bool) -> LogicalSegment:
-        """Decode logical segment from stream."""
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> LogicalSegment:
         header = _logical_header.decode_int(header_value)
         _type = LogicalSegmentType(header["logical_type"])
         _format = LogicalFormat(header["format"])
-
-        # Validate format for specific types
-        if _format == LogicalFormat.format_32bit and _type not in (
-            LogicalSegmentType.type_instance_id,
-            LogicalSegmentType.type_connection_point,
-        ):
-            raise ValueError(f"32-bit logical format on unsupported logical type: {_type:03b}")
 
         # Decode value based on type and format
         if _type == LogicalSegmentType.type_special:
@@ -376,8 +362,8 @@ class LogicalSegment(CIPSegment):
         elif _format == LogicalFormat.format_8bit:
             value = usint.decode(stream)
         else:
-            if padded:
-                stream.read(1)  # Consume pad byte
+            # Consume pad byte (always present for 16/32-bit formats per CIP spec)
+            stream.read(1)
             if _format == LogicalFormat.format_16bit:
                 value = uint.decode(stream)
             else:  # format_32bit
@@ -420,7 +406,6 @@ class NetworkSegment(CIPSegment):
 
     @classmethod
     def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
-        """Encode network segment to stream."""
         type_ = value["type"]
         data = value["data"]
         _network_header.encode(
@@ -439,7 +424,6 @@ class NetworkSegment(CIPSegment):
 
     @classmethod
     def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> NetworkSegment:
-        """Decode network segment from stream."""
         header = _network_header.decode_int(header_value)
         _type = NetworkSegmentType(header["subtype"])
 
@@ -449,7 +433,7 @@ class NetworkSegment(CIPSegment):
                 data_len += 2
             data = stream.read(data_len)
         else:
-            data = usint.decode(stream).to_bytes(1, byteorder="little")
+            data = stream.read(1)
 
         return cls(_type, data)
 
@@ -488,6 +472,10 @@ EXT_TYPE_INT_MAP: dict[int, Int] = {
     SymbolicSegmentExtendedFormat.numeric_symbol_udint: udint,
 }
 
+# ANSI Extended Symbol Segment marker (0x91)
+# This is the standard CIP format for ASCII symbol names
+ANSI_EXTENDED_SYMBOL = 0x91
+
 
 class SymbolicSegment(CIPSegment):
     """Symbolic segment of a CIP path.
@@ -503,8 +491,7 @@ class SymbolicSegment(CIPSegment):
     ext_type: SymbolicSegmentExtendedFormat | int | None = None
 
     @classmethod
-    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
-        """Encode symbolic segment to stream."""
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, padded: bool) -> None:
         symbol = value["symbol"]
         ext_type = value["ext_type"]
 
@@ -521,14 +508,14 @@ class SymbolicSegment(CIPSegment):
 
         elif isinstance(symbol, bytes):
             if ext_type is None:
-                # Raw bytes - treat as ASCII string if ext_type not provided
-                if len(symbol) > MAX_SYMBOL_SIZE:
-                    raise ValueError("symbol size too large, must be <= 31 characters")
-                _symbolic_header.encode(
-                    {"symbol_size": len(symbol), "segment_type": cls.TYPE},
-                    stream,
-                )
+                # Use ANSI Extended Symbol format (0x91 + length + symbol)
+                # This is the standard CIP format for ASCII symbol names
+                stream.write(bytes([ANSI_EXTENDED_SYMBOL]))
+                usint.encode(len(symbol), stream)
                 stream.write(symbol)
+                # Add padding byte for word alignment in padded mode
+                if padded and len(symbol) % 2:
+                    stream.write(b"\x00")
             else:
                 # Extended format with ext_type
                 _format = ext_type & _SYMBOLIC_EX_FORMAT_MASK
@@ -553,8 +540,21 @@ class SymbolicSegment(CIPSegment):
             raise TypeError(f"Unsupported symbol type: {type(symbol)}")
 
     @classmethod
-    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> SymbolicSegment:
-        """Decode symbolic segment from stream."""
+    def decode(cls, stream: BinaryIO, header_value: int, padded: bool) -> SymbolicSegment:
+        # Check for ANSI Extended Symbol format (0x91)
+        if header_value == ANSI_EXTENDED_SYMBOL:
+            symbol_size = usint.decode(stream)
+            symbol = stream.read(symbol_size)
+            # Check for truncated data
+            if len(symbol) < symbol_size:
+                raise ValueError(
+                    f"Truncated symbolic segment: expected {symbol_size} bytes, got {len(symbol)}"
+                )
+            # Consume padding byte for word alignment in padded mode
+            if padded and symbol_size % 2:
+                stream.read(1)
+            return cls(symbol)
+
         header = _symbolic_header.decode_int(header_value)
         symbol_size = header["symbol_size"]
 
@@ -579,18 +579,215 @@ class SymbolicSegment(CIPSegment):
             return cls(stream.read(symbol_size))
 
 
-# FUTURE: implement DataSegment?
-# class DataSegmentType(IntEnum):
-#     simple = 0b_00000
-#     ansi_extended = 0b_10001
+# Data segment header byte:
+# Bits 0-4: Data Segment Subtype
+# Bits 5-7: Segment Type (0b100 for data)
+_data_header = Bitfields(
+    size=1,
+    fields={
+        "subtype": Bitfield(bits=5),
+        "segment_type": Bitfield(bits=3),
+    },
+)
 
 
-# class ConstructedDataTypeSegment(CIPSegment):
-#     TYPE: ClassVar[SegmentType] = SegmentType.constructed_data_type
+class DataSegmentType(IntEnum):
+    simple = 0b_00000
+
+    # Note: 0x91 (ansi_extended = 0b_10001) is handled by SymbolicSegment
+    # as ANSI Extended Symbol format for ASCII tag names
+    # ansi_extended = 0b_10001
 
 
-# class ElementaryDataTypeSegment(CIPSegment):
-#     TYPE: ClassVar[SegmentType] = SegmentType.elementary_data_type
+class DataSegment(CIPSegment):
+    """Data segment of a CIP path.
+
+    +----+----+----+----+----+----+----+----+
+    | Segment Type | Data Segment Subtype   |
+    +====+====+====+====+====+====+====+====+
+    |  7 |  6 |  5 |  4 |  3 |  2 |  1 |  0 |
+    +----+----+----+----+----+----+----+----+
+
+    For simple subtype (0x00):
+    - Followed by word count (USINT) specifying number of 16-bit words
+    - Then data words
+
+    Attributes:
+        type: Data segment subtype.
+        data: Data bytes.
+    """
+
+    TYPE: ClassVar[SegmentType] = SegmentType.data
+
+    type: DataSegmentType
+    data: bytes
+
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
+        type_ = value["type"]
+        data = value["data"]
+
+        _data_header.encode(
+            {"subtype": type_, "segment_type": cls.TYPE},
+            stream,
+        )
+
+        # Word count (number of 16-bit words, rounded up)
+        word_count = (len(data) + 1) // 2
+        usint.encode(word_count, stream)
+
+        # Write data
+        stream.write(data)
+
+        # Pad to word boundary if odd length
+        if len(data) % 2:
+            stream.write(b"\x00")
+
+    @classmethod
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> DataSegment:
+        header = _data_header.decode_int(header_value)
+        type_ = DataSegmentType(header["subtype"])
+
+        # Read word count
+        word_count = usint.decode(stream)
+
+        # Read data (word_count * 2 bytes)
+        byte_count = word_count * 2
+        data = stream.read(byte_count)
+
+        # Note: We preserve exact byte count; caller should handle trailing padding
+        # For simple, the actual data length may be less than word_count * 2
+        # but we can't know the exact length without additional context
+        return cls(type_, data)
+
+
+# Elementary data type segment header byte:
+# Bits 0-4: Type-specific encoding
+# Bits 5-7: Segment Type (0b110 for elementary data type)
+_elementary_header = Bitfields(
+    size=1,
+    fields={
+        "type_lower": Bitfield(bits=5),
+        "segment_type": Bitfield(bits=3),
+    },
+)
+
+
+class ElementaryDataTypeSegment(CIPSegment):
+    """Elementary data type segment of a CIP path.
+
+    +----+----+----+----+----+----+----+----+
+    | Segment Type | Type Code (lower 5)    |
+    +====+====+====+====+====+====+====+====+
+    |  7 |  6 |  5 |  4 |  3 |  2 |  1 |  0 |
+    +----+----+----+----+----+----+----+----+
+
+    CIP Elementary Data Types:
+    - BOOL (0xC1), SINT (0xC2), INT (0xC3), DINT (0xC4), LINT (0xC5)
+    - USINT (0xC6), UINT (0xC7), UDINT (0xC8), ULINT (0xC9)
+    - REAL (0xCA), LREAL (0xCB)
+    - STRING (0xD0), BYTE (0xD1), WORD (0xD2), DWORD (0xD3), LWORD (0xD4)
+
+    Attributes:
+        type_code: CIP elementary type code (e.g., 0xC1 for BOOL).
+    """
+
+    TYPE: ClassVar[SegmentType] = SegmentType.elementary_data_type
+
+    type_code: int
+
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, padded: bool) -> None:
+        type_code = value["type_code"]
+
+        # Write the type code directly - high 3 bits are segment type
+        # For type codes >= 0xC0, the high bits are already 0b110
+        stream.write(bytes([type_code]))
+
+        # Add padding for word alignment in padded mode
+        if padded:
+            stream.write(b"\x00")
+
+    @classmethod
+    def decode(cls, stream: BinaryIO, header_value: int, padded: bool) -> ElementaryDataTypeSegment:
+        # The header_value IS the type_code (segment type in bits 5-7)
+        type_code = header_value
+
+        # Consume padding byte in padded mode
+        if padded:
+            stream.read(1)
+
+        return cls(type_code)
+
+
+# Constructed data type segment header byte:
+# Bits 0-4: Type-specific encoding
+# Bits 5-7: Segment Type (0b101 for constructed data type)
+_constructed_header = Bitfields(
+    size=1,
+    fields={
+        "type_lower": Bitfield(bits=5),
+        "segment_type": Bitfield(bits=3),
+    },
+)
+
+
+class ConstructedDataTypeSegment(CIPSegment):
+    """Constructed data type segment of a CIP path.
+
+    +----+----+----+----+----+----+----+----+
+    | Segment Type | Type Code (lower 5)    |
+    +====+====+====+====+====+====+====+====+
+    |  7 |  6 |  5 |  4 |  3 |  2 |  1 |  0 |
+    +----+----+----+----+----+----+----+----+
+
+    CIP Constructed Data Types:
+    - Array (0xA0), Abbreviated Array (0xA1)
+    - Structure (0xA2), Abbreviated Structure (0xA3)
+
+    Attributes:
+        type_code: CIP constructed type code (e.g., 0xA0 for array).
+        data: Additional type definition data.
+    """
+
+    TYPE: ClassVar[SegmentType] = SegmentType.constructed_data_type
+
+    type_code: int
+    data: bytes
+
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
+        type_code = value["type_code"]
+        data = value["data"]
+
+        # Write the type code directly - high 3 bits are segment type
+        stream.write(bytes([type_code]))
+
+        # Write word count (number of 16-bit words)
+        word_count = (len(data) + 1) // 2
+        usint.encode(word_count, stream)
+
+        # Write data
+        stream.write(data)
+
+        # Pad to word boundary if odd length
+        if len(data) % 2:
+            stream.write(b"\x00")
+
+    @classmethod
+    def decode(
+        cls, stream: BinaryIO, header_value: int, _padded: bool
+    ) -> ConstructedDataTypeSegment:
+        type_code = header_value
+
+        # Read word count
+        word_count = usint.decode(stream)
+
+        # Read data (word_count * 2 bytes)
+        byte_count = word_count * 2
+        data = stream.read(byte_count)
+
+        return cls(type_code, data)
 
 
 # ---------------------------------------------------------------------------
@@ -620,8 +817,14 @@ class CIPSegmentFmt:
 
     def decode(self, stream: BinaryIO, **_: Any) -> CIPSegment:
         header_value = stream.read(1)[0]
-        segment_type = SegmentType(header_value >> 5)
-        segment_cls = CIPSegment.TYPES[segment_type]
+        # Special case: ANSI Extended Symbol format (0x91)
+        # This marker has segment type bits = 0b100 (data) but is actually
+        # a symbolic segment in CIP
+        if header_value == ANSI_EXTENDED_SYMBOL:
+            segment_cls = SymbolicSegment
+        else:
+            segment_type = SegmentType(header_value >> 5)
+            segment_cls = CIPSegment.TYPES[segment_type]
         return segment_cls.decode(stream, header_value, self.padded)
 
 

@@ -58,7 +58,11 @@ from ._cip import (
     LogicalSegment as LogicalSegment,
     NetworkSegment as NetworkSegment,
     SymbolicSegment as SymbolicSegment,
+    DataSegment as DataSegment,
+    ElementaryDataTypeSegment as ElementaryDataTypeSegment,
+    ConstructedDataTypeSegment as ConstructedDataTypeSegment,
     # enums
+    DataSegmentType as DataSegmentType,
     LogicalSegmentType as LogicalSegmentType,
     NetworkSegmentType as NetworkSegmentType,
     SymbolicSegmentExtendedFormat as SymbolicSegmentExtendedFormat,
