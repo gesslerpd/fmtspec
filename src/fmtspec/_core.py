@@ -107,34 +107,34 @@ def _msgspec_decode_hook(cls: type, obj: Any) -> Any:
     return obj
 
 
-def _preserve_types(obj: Any) -> Any:
-    """Recursively preserve registered types in collections.
+# def _preserve_types(obj: Any) -> Any:
+#     """Recursively preserve registered types in collections.
 
-    This function walks through lists/tuples and replaces items that would
-    otherwise be converted to dicts by msgspec.to_builtins.
-    """
-    if not PRESERVED_TYPES:
-        return obj
+#     This function walks through lists/tuples and replaces items that would
+#     otherwise be converted to dicts by msgspec.to_builtins.
+#     """
+#     if not PRESERVED_TYPES:
+#         return obj
 
-    preserved_tuple = tuple(PRESERVED_TYPES)
+#     preserved_tuple = tuple(PRESERVED_TYPES)
 
-    if isinstance(obj, preserved_tuple):
-        # Already a preserved type, return as-is
-        return obj
-    elif isinstance(obj, list):
-        # Check if any items are preserved types
-        result = []
-        for item in obj:
-            if isinstance(item, preserved_tuple):
-                result.append(item)
-            else:
-                result.append(_preserve_types(item))
-        return result
-    elif isinstance(obj, tuple):
-        return tuple(_preserve_types(item) for item in obj)
-    elif isinstance(obj, dict):
-        return {k: _preserve_types(v) for k, v in obj.items()}
-    return obj
+#     if isinstance(obj, preserved_tuple):
+#         # Already a preserved type, return as-is
+#         return obj
+#     elif isinstance(obj, list):
+#         # Check if any items are preserved types
+#         result = []
+#         for item in obj:
+#             if isinstance(item, preserved_tuple):
+#                 result.append(item)
+#             else:
+#                 result.append(_preserve_types(item))
+#         return result
+#     elif isinstance(obj, tuple):
+#         return tuple(_preserve_types(item) for item in obj)
+#     elif isinstance(obj, dict):
+#         return {k: _preserve_types(v) for k, v in obj.items()}
+#     return obj
 
 
 def _to_builtins(obj: Any, recursive: bool) -> Any:

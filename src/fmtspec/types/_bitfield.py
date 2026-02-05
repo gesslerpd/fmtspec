@@ -165,9 +165,12 @@ class Bitfields:
         # True/False behave as `int` but not other way around
         return raw == 1 if bitfield.bits == 1 else raw
 
-    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
-        int_val = self._int_type.decode(stream, **_)
+    def decode_int(self, value: int) -> dict[str, int]:
         return {
-            name: self._decode_bitfield(bitfield, name, int_val)
+            name: self._decode_bitfield(bitfield, name, value)
             for name, bitfield in self.fields.items()
         }
+
+    def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
+        int_val = self._int_type.decode(stream, **_)
+        return self.decode_int(int_val)

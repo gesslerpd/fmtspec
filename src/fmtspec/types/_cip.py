@@ -10,19 +10,15 @@ Each segment type has a 3-bit type code in the high bits of its first byte.
 
 from __future__ import annotations
 
-import ipaddress
 from dataclasses import dataclass
 from enum import IntEnum
-from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Self
 
 import msgspec
 
-from .._core import _decode_stream, _encode_stream
 from ._array import array
 from ._bitfield import Bitfield, Bitfields
-from ._bytes import Bytes
-from ._int import u8le, u16le, u32le, u64le
+from ._int import Int, u8le, u16le, u32le, u64le
 from ._sized import Sized
 
 if TYPE_CHECKING:
@@ -107,25 +103,33 @@ _symbolic_header = Bitfields(
     },
 )
 
-_header = Bitfields(
-    size=1,
-    fields={
-        "segment_type": Bitfield(bits=3, offset=5),
-    },
-)
+# CIP encoding constraints
+_MAX_CIP_UINT_SIZE = 4  # Maximum byte size for CIP unsigned integers (1, 2, or 4)
+_BITS_PER_BYTE = 8
 
 
 def _min_uint_size(value: int) -> int:
-    """Determine minimum byte size needed to encode an unsigned integer (1, 2, or 4)."""
-    if value < 0:
-        raise ValueError("Value must be non-negative")
-    if value <= 0xFF:
-        return 1
-    if value <= 0xFFFF:
-        return 2
-    if value <= 0xFFFFFFFF:
-        return 4
-    raise ValueError(f"Value {value} too large for CIP encoding")
+    size = 1
+    while value >= (1 << (size * _BITS_PER_BYTE)):
+        size *= 2
+
+    if size > _MAX_CIP_UINT_SIZE:
+        raise ValueError(
+            f"Value too large for CIP encoding (requires {size} bytes, max {_MAX_CIP_UINT_SIZE})"
+        )
+    return size
+
+
+# assert _min_uint_size(0xFF) == _min_uint_size(0x00) == 1
+# assert _min_uint_size(0xFFFF) == _min_uint_size(0x100) == 2
+# assert _min_uint_size(0xFFFFFFFF) == _min_uint_size(0x10000) == 4
+
+
+def _value_to_bytes(value: int | bytes) -> bytes:
+    if isinstance(value, int):
+        size = _min_uint_size(value)
+        return value.to_bytes(size, byteorder="little")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +166,6 @@ class CIPSegment(
 
     TYPE: ClassVar[SegmentType] = SegmentType.port
     TYPES: ClassVar[dict[int, type[CIPSegment]]] = {}
-    HEADER_FMT: ClassVar[Bitfields] = _header
 
     # does not run for this base class
     def __init_subclass__(cls, *args) -> None:
@@ -170,6 +173,17 @@ class CIPSegment(
         SEGMENT_TYPE_MAP[cls.__name__] = int(cls.TYPE)
         cls.TYPES[cls.TYPE] = cls
         return super().__init_subclass__(*args)
+
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
+        raise NotImplementedError
+
+    @classmethod
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> Self:
+        raise NotImplementedError
+
+
+EXTENDED_PORT = 0x0F
 
 
 class PortSegment(CIPSegment):
@@ -183,102 +197,66 @@ class PortSegment(CIPSegment):
 
     Attributes:
         port: Port identifier (backplane, enet, etc.) or port number.
-        link_address: Link address as int, IP string, or raw bytes.
+        link_address: Link address as int or raw bytes.
     """
 
     TYPE: ClassVar[SegmentType] = SegmentType.port
-    HEADER_FMT: ClassVar[Bitfields] = _port_header
 
     port: int
     link_address: int | bytes
     ext_link: bool = False
 
-    def _get_port_info(self) -> tuple[int, int]:
-        """Get normalized port value and extended port.
-
-        Returns:
-            Tuple of (port_value, ex_port) where ex_port is 0 if not extended.
-        """
-        port_val: int
-        if isinstance(self.port, str):
-            if self.port.isdigit():
-                port_val = int(self.port)
-            else:
-                raise NotImplementedError
-        else:
-            port_val = int(self.port)
-
-        if port_val > 0x0F:
-            return (0x0F, port_val)
-        return (port_val, 0)
-
-    def _get_link_bytes(self) -> bytes:
-        """Get normalized link address as bytes."""
-        if isinstance(self.link_address, str):
-            if self.link_address.isnumeric():
-                val = int(self.link_address)
-                size = _min_uint_size(val)
-                return val.to_bytes(size, byteorder="little")
-            else:
-                ip = ipaddress.ip_address(self.link_address)
-                return str(ip).encode()
-        elif isinstance(self.link_address, int):
-            size = _min_uint_size(self.link_address)
-            return self.link_address.to_bytes(size, byteorder="little")
-        else:
-            return self.link_address
-
-    def encode(self, stream: BinaryIO, _padded: bool) -> None:
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
         """Encode port segment to stream."""
-        port_value, ex_port = self._get_port_info()
-        link_bytes = self._get_link_bytes()
-        ex_link = len(link_bytes) > 1
+        # Determine port encoding
+        port_value = value["port"]
+        link_addr = value["link_address"]
 
-        # Write header byte using bitfield
+        # Get link address bytes
+        link_bytes = _value_to_bytes(link_addr)
+        ext_link = len(link_bytes) > 1
+
+        # Write header byte
         _port_header.encode(
             {
-                "port_id": port_value,
-                "ex_link": ex_link,
-                "segment_type": self.TYPE,
+                "port": port_value,
+                "ext_link": ext_link,
+                "segment_type": cls.TYPE,
             },
             stream,
         )
 
-        # Extended port (2 bytes) if port > 15
-        if ex_port:
-            uint.encode(ex_port, stream)
+        # Extended port if needed
+        if port_value == EXTENDED_PORT:
+            uint.encode(port_value, stream)
 
         # Link address
-        if ex_link:
+        if ext_link:
             usint.encode(len(link_bytes), stream)
             stream.write(link_bytes)
-            # Pad to even length
             if len(link_bytes) % 2:
                 stream.write(b"\x00")
         else:
             stream.write(link_bytes)
 
     @classmethod
-    def decode(cls, stream: BinaryIO, _padded: bool) -> PortSegment:
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> PortSegment:
         """Decode port segment from stream."""
-        header = _port_header.decode(stream)
-
-        if header["segment_type"] != cls.TYPE:
-            raise TypeError(f"Segment type invalid for PortSegment: {header['segment_type']:03b}")
-
-        ex_link = header["ex_link"]
-        port = header["port_id"]
+        header = _port_header.decode_int(header_value)
+        ext_link = header["ext_link"]
+        port = header["port"]
 
         # Extended port
-        if port == 0x0F:
+        if port == EXTENDED_PORT:
             port = uint.decode(stream)
 
         # Link address
-        if ex_link:
+        if ext_link:
             link_size = usint.decode(stream)
             if not link_size:
                 raise ValueError("Extended link address size is 0")
-            link = Bytes(link_size).decode(stream)
+            link = stream.read(link_size)
             # Consume pad byte if odd length
             if link_size % 2:
                 stream.read(1)
@@ -306,6 +284,13 @@ class LogicalFormat(IntEnum):
     format_reserved = 0b11
 
 
+LOGICAL_FORMAT_SIZE_MAP = {
+    1: LogicalFormat.format_8bit,
+    2: LogicalFormat.format_16bit,
+    4: LogicalFormat.format_32bit,
+}
+
+
 class LogicalSegment(CIPSegment):
     """Logical segment of a CIP path.
 
@@ -321,63 +306,46 @@ class LogicalSegment(CIPSegment):
     """
 
     TYPE: ClassVar[SegmentType] = SegmentType.logical
-    HEADER_FMT: ClassVar[Bitfields] = _logical_header
 
     type: LogicalSegmentType
     value: int | bytes
 
-    def _get_value_info(self) -> tuple[bytes, LogicalFormat]:
-        """Get normalized value bytes and format.
-
-        Returns:
-            Tuple of (value_bytes, format).
-
-        Raises:
-            ValueError: If value is invalid for the segment type.
-        """
-        # Normalize value to bytes
-        if isinstance(self.value, int):
-            size = _min_uint_size(self.value)
-            value_bytes = self.value.to_bytes(size, byteorder="little")
-        else:
-            value_bytes = self.value
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, padded: bool) -> None:
+        """Encode logical segment to stream."""
+        # Get value bytes
+        val = value["value"]
+        type_ = value["type"]
+        value_bytes = _value_to_bytes(val)
 
         val_len = len(value_bytes)
+        fmt = LOGICAL_FORMAT_SIZE_MAP.get(val_len)
 
-        # Determine format based on type and value size
-        if self.type == LogicalSegmentType.type_service_id:
+        if fmt is None:
+            raise ValueError("logical value too large")
+
+        # Determine format
+        if type_ == LogicalSegmentType.type_service_id:
             if val_len != 1:
                 raise ValueError(
                     f"Invalid logical value for Service ID type, expected 1 byte, got: {val_len}"
                 )
-            return (value_bytes, LogicalFormat.format_8bit)
-        elif self.type == LogicalSegmentType.type_special:
+        elif type_ == LogicalSegmentType.type_special:
             raise ValueError("Logical segments with Special type are not supported")
-        elif val_len == 1:
-            return (value_bytes, LogicalFormat.format_8bit)
-        elif val_len == 2:
-            return (value_bytes, LogicalFormat.format_16bit)
-        elif val_len == 4:
-            if self.type not in (
-                LogicalSegmentType.type_instance_id,
-                LogicalSegmentType.type_connection_point,
-            ):
-                raise ValueError(
-                    "32-bit logical value only valid for Instance ID and Connection Point types"
-                )
-            return (value_bytes, LogicalFormat.format_32bit)
-        else:
-            raise ValueError("logical value too large")
+        elif fmt == LogicalFormat.format_32bit and type_ not in (
+            LogicalSegmentType.type_instance_id,
+            LogicalSegmentType.type_connection_point,
+        ):
+            raise ValueError(
+                "32-bit logical value only valid for Instance ID and Connection Point types"
+            )
 
-    def encode(self, stream: BinaryIO, padded: bool) -> None:
-        """Encode logical segment to stream."""
-        value_bytes, fmt = self._get_value_info()
-
+        # Write header
         _logical_header.encode(
             {
                 "format": fmt,
-                "logical_type": self.type,
-                "segment_type": self.TYPE,
+                "logical_type": type_,
+                "segment_type": cls.TYPE,
             },
             stream,
         )
@@ -389,38 +357,22 @@ class LogicalSegment(CIPSegment):
         stream.write(value_bytes)
 
     @classmethod
-    def decode(cls, stream: BinaryIO, padded: bool) -> LogicalSegment:
+    def decode(cls, stream: BinaryIO, header_value: int, padded: bool) -> LogicalSegment:
         """Decode logical segment from stream."""
-        header = _logical_header.decode(stream)
+        header = _logical_header.decode_int(header_value)
+        _type = LogicalSegmentType(header["logical_type"])
+        _format = LogicalFormat(header["format"])
 
-        if header["segment_type"] != cls.TYPE:
-            raise TypeError(
-                f"Segment type invalid for LogicalSegment: {header['segment_type']:03b}"
-            )
-
-        _type = header["logical_type"]
-        _format = header["format"]
-
-        if _type == LogicalSegmentType.type_reserved:
-            raise ValueError("Unsupported logical type: Reserved")
-
-        if _format == LogicalFormat.format_reserved:
-            raise ValueError("Unsupported logical format: Reserved")
-        elif _format == LogicalFormat.format_32bit and _type not in (
+        # Validate format for specific types
+        if _format == LogicalFormat.format_32bit and _type not in (
             LogicalSegmentType.type_instance_id,
             LogicalSegmentType.type_connection_point,
         ):
             raise ValueError(f"32-bit logical format on unsupported logical type: {_type:03b}")
 
-        value: int | bytes
+        # Decode value based on type and format
         if _type == LogicalSegmentType.type_special:
-            if _format != LogicalFormat.format_8bit:
-                raise ValueError(f"Unsupported logical format for Special type: {_format:02b}")
-            value = Bytes(6).decode(stream)  # Electronic key
-        elif _type == LogicalSegmentType.type_service_id:
-            if _format != LogicalFormat.format_8bit:
-                raise ValueError(f"Unsupported logical format for Service ID type: {_format:02b}")
-            value = usint.decode(stream)
+            value = stream.read(6)  # Electronic key
         elif _format == LogicalFormat.format_8bit:
             value = usint.decode(stream)
         else:
@@ -428,10 +380,10 @@ class LogicalSegment(CIPSegment):
                 stream.read(1)  # Consume pad byte
             if _format == LogicalFormat.format_16bit:
                 value = uint.decode(stream)
-            else:
+            else:  # format_32bit
                 value = udint.decode(stream)
 
-        return cls(LogicalSegmentType(_type), value)
+        return cls(_type, value)
 
 
 class NetworkSegmentType(IntEnum):
@@ -455,7 +407,6 @@ class NetworkSegment(CIPSegment):
     """
 
     TYPE: ClassVar[SegmentType] = SegmentType.network
-    HEADER_FMT: ClassVar[Bitfields] = _network_header
 
     type: NetworkSegmentType
     data: bytes
@@ -467,44 +418,40 @@ class NetworkSegment(CIPSegment):
                 f"Network segment subtype {self.type:05b} requires exactly one byte of data"
             )
 
-    def encode(self, stream: BinaryIO, _padded: bool) -> None:
+    @classmethod
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
         """Encode network segment to stream."""
+        type_ = value["type"]
+        data = value["data"]
         _network_header.encode(
-            {"subtype": self.type, "segment_type": self.TYPE},
+            {"subtype": type_, "segment_type": cls.TYPE},
             stream,
         )
 
-        if self.type & _NETWORK_DATA_ARRAY_MASK:
-            data_len = len(self.data)
-            if self.type == NetworkSegmentType.extended:
+        if type_ & _NETWORK_DATA_ARRAY_MASK:
+            data_len = len(data)
+            if type_ == NetworkSegmentType.extended:
                 data_len -= 2
             usint.encode(data_len, stream)
-            stream.write(self.data)
+            stream.write(data)
         else:
-            stream.write(self.data)
+            stream.write(data)
 
     @classmethod
-    def decode(cls, stream: BinaryIO, _padded: bool) -> NetworkSegment:
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> NetworkSegment:
         """Decode network segment from stream."""
-        header = _network_header.decode(stream)
-
-        if header["segment_type"] != cls.TYPE:
-            raise TypeError(
-                f"Segment type invalid for NetworkSegment: {header['segment_type']:03b}"
-            )
-
-        _type = header["subtype"]
-        NetworkSegmentType(_type)  # validate type
+        header = _network_header.decode_int(header_value)
+        _type = NetworkSegmentType(header["subtype"])
 
         if _type & _NETWORK_DATA_ARRAY_MASK:
             data_len = usint.decode(stream)
             if _type == NetworkSegmentType.extended:
                 data_len += 2
-            data = Bytes(data_len).decode(stream)
+            data = stream.read(data_len)
         else:
             data = usint.decode(stream).to_bytes(1, byteorder="little")
 
-        return cls(NetworkSegmentType(_type), data)
+        return cls(_type, data)
 
 
 class SymbolicSegmentExtendedFormat(IntEnum):
@@ -521,9 +468,25 @@ class SymbolicSegmentExtendedFormat(IntEnum):
     numeric_symbol_udint = _numeric_format | _numeric_udint
 
 
+CHAR_SIZE_MAP: dict[int, int] = {
+    SymbolicSegmentExtendedFormat.double_byte_chars: 2,
+    SymbolicSegmentExtendedFormat.triple_byte_chars: 3,
+}
+
 _SYMBOLIC_EX_FORMAT_MASK = 0b111_00000
 _SYMBOLIC_EX_SIZE_MASK = 0b000_11111
 MAX_SYMBOL_SIZE = 31
+
+EXT_TYPE_SIZE_MAP = {
+    1: SymbolicSegmentExtendedFormat.numeric_symbol_usint,
+    2: SymbolicSegmentExtendedFormat.numeric_symbol_uint,
+    4: SymbolicSegmentExtendedFormat.numeric_symbol_udint,
+}
+EXT_TYPE_INT_MAP: dict[int, Int] = {
+    SymbolicSegmentExtendedFormat.numeric_symbol_usint: usint,
+    SymbolicSegmentExtendedFormat.numeric_symbol_uint: uint,
+    SymbolicSegmentExtendedFormat.numeric_symbol_udint: udint,
+}
 
 
 class SymbolicSegment(CIPSegment):
@@ -531,123 +494,89 @@ class SymbolicSegment(CIPSegment):
 
     Attributes:
         symbol: Symbol as ASCII string, numeric value, or raw bytes.
-        ex_type: Extended format type (required for bytes, auto-set otherwise).
+        ext_type: Extended format type (required for bytes, auto-set otherwise).
     """
 
     TYPE: ClassVar[SegmentType] = SegmentType.symbolic
-    HEADER_FMT: ClassVar[Bitfields] = _symbolic_header
 
     symbol: int | bytes
-    ex_type: SymbolicSegmentExtendedFormat | int | None = None
-
-    def _get_symbol_info(self) -> tuple[bytes, bool, int | None]:
-        """Get normalized symbol bytes, extended flag, and ex_type.
-
-        Returns:
-            Tuple of (symbol_bytes, is_extended, ex_type).
-
-        Raises:
-            ValueError: If symbol configuration is invalid.
-        """
-        if isinstance(self.symbol, bytes):
-            if self.ex_type is None:
-                raise ValueError("symbol of type bytes requires 'ex_type' to be provided")
-            _format = self.ex_type & _SYMBOLIC_EX_FORMAT_MASK
-            ex_type_val = self.ex_type
-            if _format == SymbolicSegmentExtendedFormat.double_byte_chars:
-                if len(self.symbol) % 2:
-                    raise ValueError(
-                        "length of symbol with double-byte characters is not a multiple of 2"
-                    )
-                ex_type_val = (
-                    SymbolicSegmentExtendedFormat.double_byte_chars | len(self.symbol) // 2
-                )
-            elif _format == SymbolicSegmentExtendedFormat.triple_byte_chars:
-                if len(self.symbol) % 3:
-                    raise ValueError(
-                        "length of symbol with triple-byte characters is not a multiple of 3"
-                    )
-                ex_type_val = (
-                    SymbolicSegmentExtendedFormat.triple_byte_chars | len(self.symbol) // 3
-                )
-            return (self.symbol, True, ex_type_val)
-
-        elif isinstance(self.symbol, str):
-            if len(self.symbol) > MAX_SYMBOL_SIZE:
-                raise ValueError("symbol size too large, must be <= 31 characters")
-            return (self.symbol.encode("ascii"), False, None)
-
-        elif isinstance(self.symbol, int):
-            # Numeric symbol - determine size
-            size = _min_uint_size(self.symbol)
-            if size == 1:
-                ex_type_val = SymbolicSegmentExtendedFormat.numeric_symbol_usint
-            elif size == 2:
-                ex_type_val = SymbolicSegmentExtendedFormat.numeric_symbol_uint
-            else:
-                ex_type_val = SymbolicSegmentExtendedFormat.numeric_symbol_udint
-                size = 4
-            return (self.symbol.to_bytes(size, byteorder="little"), True, ex_type_val)
-
-        raise TypeError(f"Unsupported symbol type: {type(self.symbol)}")
-
-    def encode(self, stream: BinaryIO, _padded: bool) -> None:
-        """Encode symbolic segment to stream."""
-        symbol_bytes, is_extended, ex_type_val = self._get_symbol_info()
-
-        if is_extended:
-            if ex_type_val is None:
-                raise ValueError("symbol ex_type must not be None for extended format")
-            # Extended format: header with size=0, then ex_type byte
-            _symbolic_header.encode(
-                {"symbol_size": 0, "segment_type": self.TYPE},
-                stream,
-            )
-            usint.encode(ex_type_val, stream)
-            stream.write(symbol_bytes)
-        else:
-            # ASCII string - length encoded in segment byte
-            _symbolic_header.encode(
-                {"symbol_size": len(symbol_bytes), "segment_type": self.TYPE},
-                stream,
-            )
-            stream.write(symbol_bytes)
+    ext_type: SymbolicSegmentExtendedFormat | int | None = None
 
     @classmethod
-    def decode(cls, stream: BinaryIO, _padded: bool) -> SymbolicSegment:
-        """Decode symbolic segment from stream."""
-        header = _symbolic_header.decode(stream)
+    def encode(cls, value: dict[str, Any], stream: BinaryIO, _padded: bool) -> None:
+        """Encode symbolic segment to stream."""
+        symbol = value["symbol"]
+        ext_type = value["ext_type"]
 
-        if header["segment_type"] != cls.TYPE:
-            raise TypeError(
-                f"Segment type invalid for SymbolicSegment: {header['segment_type']:03b}"
+        if isinstance(symbol, int):
+            # Numeric symbol
+            symbol_bytes = _value_to_bytes(symbol)
+            ext_type_val = EXT_TYPE_SIZE_MAP[len(symbol_bytes)]
+            _symbolic_header.encode(
+                {"symbol_size": 0, "segment_type": cls.TYPE},
+                stream,
             )
+            usint.encode(ext_type_val, stream)
+            stream.write(symbol_bytes)
 
+        elif isinstance(symbol, bytes):
+            if ext_type is None:
+                # Raw bytes - treat as ASCII string if ext_type not provided
+                if len(symbol) > MAX_SYMBOL_SIZE:
+                    raise ValueError("symbol size too large, must be <= 31 characters")
+                _symbolic_header.encode(
+                    {"symbol_size": len(symbol), "segment_type": cls.TYPE},
+                    stream,
+                )
+                stream.write(symbol)
+            else:
+                # Extended format with ext_type
+                _format = ext_type & _SYMBOLIC_EX_FORMAT_MASK
+                char_size = CHAR_SIZE_MAP.get(_format)
+
+                if char_size:
+                    if len(symbol) % char_size:
+                        raise ValueError(
+                            f"length of symbol with {char_size}-byte characters is not a multiple of {char_size}"
+                        )
+                    ext_type_val = _format | len(symbol) // char_size
+                else:
+                    ext_type_val = ext_type
+
+                _symbolic_header.encode(
+                    {"symbol_size": 0, "segment_type": cls.TYPE},
+                    stream,
+                )
+                usint.encode(ext_type_val, stream)
+                stream.write(symbol)
+        else:
+            raise TypeError(f"Unsupported symbol type: {type(symbol)}")
+
+    @classmethod
+    def decode(cls, stream: BinaryIO, header_value: int, _padded: bool) -> SymbolicSegment:
+        """Decode symbolic segment from stream."""
+        header = _symbolic_header.decode_int(header_value)
         symbol_size = header["symbol_size"]
+
         if not symbol_size:
             # Extended format
-            ex_type = usint.decode(stream)
-            size = ex_type & _SYMBOLIC_EX_SIZE_MASK
-            _format = ex_type & _SYMBOLIC_EX_FORMAT_MASK
-            symbol: str | int | bytes
+            ext_type = usint.decode(stream)
+            size = ext_type & _SYMBOLIC_EX_SIZE_MASK
+            _format = ext_type & _SYMBOLIC_EX_FORMAT_MASK
 
-            if _format == SymbolicSegmentExtendedFormat.double_byte_chars:
-                symbol = Bytes(size * 2).decode(stream)
-            elif _format == SymbolicSegmentExtendedFormat.triple_byte_chars:
-                symbol = Bytes(size * 3).decode(stream)
-            elif ex_type == SymbolicSegmentExtendedFormat.numeric_symbol_usint:
-                symbol = usint.decode(stream)
-            elif ex_type == SymbolicSegmentExtendedFormat.numeric_symbol_uint:
-                symbol = uint.decode(stream)
-            elif ex_type == SymbolicSegmentExtendedFormat.numeric_symbol_udint:
-                symbol = udint.decode(stream)
+            char_size = CHAR_SIZE_MAP.get(_format)
+
+            if char_size:
+                symbol = stream.read(size * char_size)
+            elif ext_type in EXT_TYPE_INT_MAP:
+                int_type = EXT_TYPE_INT_MAP[ext_type]
+                symbol = int_type.decode(stream)
             else:
                 raise TypeError(f"unsupported extended string format type: {_format}")
-            return cls(symbol, ex_type=ex_type)
+            return cls(symbol, ext_type)
         else:
-            # ASCII string
-            symbol = Bytes(symbol_size).decode(stream).decode("ascii")
-            return cls(symbol)
+            # ASCII string - return as bytes to match encoding behavior
+            return cls(stream.read(symbol_size))
 
 
 # FUTURE: implement DataSegment?
@@ -656,16 +585,16 @@ class SymbolicSegment(CIPSegment):
 #     ansi_extended = 0b_10001
 
 
-class ConstructedDataTypeSegment(CIPSegment):
-    TYPE: ClassVar[SegmentType] = SegmentType.constructed_data_type
+# class ConstructedDataTypeSegment(CIPSegment):
+#     TYPE: ClassVar[SegmentType] = SegmentType.constructed_data_type
 
 
-class ElementaryDataTypeSegment(CIPSegment):
-    TYPE: ClassVar[SegmentType] = SegmentType.elementary_data_type
+# class ElementaryDataTypeSegment(CIPSegment):
+#     TYPE: ClassVar[SegmentType] = SegmentType.elementary_data_type
 
 
 # ---------------------------------------------------------------------------
-# CIPSegment base class (format type for segment dispatch)
+# CIPSegmentFmt (format type for segment dispatch)
 # ---------------------------------------------------------------------------
 
 
@@ -685,27 +614,15 @@ class CIPSegmentFmt:
     size: ClassVar[EllipsisType] = ...
 
     def encode(self, value: dict[str, Any], stream: BinaryIO, **_: Any) -> None:
-        """Encode a CIP segment value to the stream.
-
-        Handles both CIPSegment instances and dicts (from msgspec.to_builtins).
-        Uses the 'kind' tag field for automatic type reconstruction.
-        """
         segment_type = SegmentType(value["segment_type"])
         segment_cls = CIPSegment.TYPES[segment_type]
-
-        _encode_stream(value, segment_cls.HEADER_FMT, stream, **_)
-        # encode the rest of the segment
-        raise NotImplementedError
+        segment_cls.encode(value, stream, self.padded)
 
     def decode(self, stream: BinaryIO, **_: Any) -> CIPSegment:
-        """Decode a CIP segment from the stream, dispatching by type."""
-        header_data = stream.read(1)
-        segment_type = SegmentType(header_data[0] >> 5)
+        header_value = stream.read(1)[0]
+        segment_type = SegmentType(header_value >> 5)
         segment_cls = CIPSegment.TYPES[segment_type]
-
-        header = _decode_stream(BytesIO(header_data), segment_cls.HEADER_FMT, **_)[0]
-        # decode the rest of the segment
-        raise NotImplementedError
+        return segment_cls.decode(stream, header_value, self.padded)
 
 
 # Convenience instances
@@ -717,6 +634,6 @@ cip_segment_padded = CIPSegmentFmt(padded=True)
 epath_packed = array(cip_segment)
 epath_padded = array(cip_segment_padded)
 # small sized
-epath_padded_len = Sized(usint, epath_padded, factor=2)
+short_sized_padded_epath = Sized(usint, epath_padded, factor=2)
 # large sized
-epath_padded_pad_len = Sized(uint, epath_padded, factor=2)
+sized_padded_epath = Sized(uint, epath_padded, factor=2)
