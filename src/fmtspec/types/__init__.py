@@ -44,26 +44,3 @@ from ._takeuntil import TakeUntil as TakeUntil
 
 # non-Type symbols often used in formats (FUTURE: move these to top-level?)
 from ._ref import Ref as Ref
-
-# CIP (Common Industrial Protocol) types
-from ._cip import (
-    cip_segment as cip_segment,
-    cip_segment_padded as cip_segment_padded,
-    epath_packed as epath_packed,
-    epath_padded as epath_padded,
-    short_sized_padded_epath as short_sized_padded_epath,
-    sized_padded_epath as sized_padded_epath,
-    # segment types
-    PortSegment as PortSegment,
-    LogicalSegment as LogicalSegment,
-    NetworkSegment as NetworkSegment,
-    SymbolicSegment as SymbolicSegment,
-    DataSegment as DataSegment,
-    ElementaryDataTypeSegment as ElementaryDataTypeSegment,
-    ConstructedDataTypeSegment as ConstructedDataTypeSegment,
-    # enums
-    DataSegmentType as DataSegmentType,
-    LogicalSegmentType as LogicalSegmentType,
-    NetworkSegmentType as NetworkSegmentType,
-    SymbolicSegmentExtendedFormat as SymbolicSegmentExtendedFormat,
-)

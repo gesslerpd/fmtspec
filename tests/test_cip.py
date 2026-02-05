@@ -6,7 +6,7 @@ import pytest
 
 from fmtspec import DecodeError, EncodeError, decode, encode
 from fmtspec._core import _convert, _to_builtins
-from fmtspec.types import (
+from fmtspec.types.cip import (
     ConstructedDataTypeSegment,
     # data segment types
     DataSegment,
