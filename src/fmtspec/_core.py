@@ -244,7 +244,8 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
     obj = _to_builtins(obj, recursive=False)
     ctx = Context()
     try:
-        _encode_stream(obj, fmt, stream, context=ctx)
+        # specify key=None for root node
+        _encode_stream(obj, fmt, stream, context=ctx, key=None)
     except EncodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -287,7 +288,8 @@ def decode_stream[T](
 
     ctx = Context()
     try:
-        result, _ = _decode_stream(stream, fmt, context=ctx)
+        # specify key=None for root node
+        result, _ = _decode_stream(stream, fmt, context=ctx, key=None)
     except DecodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise

@@ -58,7 +58,8 @@ def _encode_inspect_stream(obj: Any, stream: BinaryIO, fmt: Format) -> InspectNo
     buffering_stream = WriteBufferingStream(stream)
     ctx = Context(inspect=True)
     try:
-        tree = _encode_stream(obj, fmt, cast("BinaryIO", buffering_stream), context=ctx)
+        # specify key=None for root node
+        tree = _encode_stream(obj, fmt, cast("BinaryIO", buffering_stream), context=ctx, key=None)
     except EncodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -127,10 +128,11 @@ def _decode_inspect_stream[T](
     stream: BinaryIO, fmt: Format, *, shape: type[T] | None = None
 ) -> tuple[T | Any, InspectNode]:
     # Wrap stream to capture bytes for inspection
-    buffering_stream = BufferingStream(stream)
+    buffering_stream = cast("BinaryIO", BufferingStream(stream))
     ctx = Context(inspect=True)
     try:
-        result, tree = _decode_stream(cast("BinaryIO", buffering_stream), fmt, context=ctx)
+        # specify key=None for root node
+        result, tree = _decode_stream(buffering_stream, fmt, context=ctx, key=None)
     except DecodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -239,11 +241,12 @@ def _format_node(  # noqa: PLR0913
     max_depth: int,
 ) -> Iterator[str]:
     """Recursively format a node and its children."""
+    # FUTURE: if not is_root and not node.key is None
+    # should we flatten those nodes? and have them not contribute to depth?
+
     # Determine the name display
     if is_root:
         lookup_key = "*"
-    elif isinstance(node.key, int):
-        lookup_key = f"[{node.key}]"
     else:
         lookup_key = f"[{node.key}]"
 

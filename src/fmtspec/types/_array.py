@@ -8,7 +8,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._stream import _decode_stream, _encode_stream
+from .._stream import _decode_stream, _encode_stream, _inspect_scope
 from .._utils import sizeof
 from ._float import Float
 from ._int import Int
@@ -216,15 +216,23 @@ class Array:
             raise ValueError(dim_mismatch)
 
         if idx == len(dims) - 1:
-            for elem in v:
-                _encode_stream(elem, elem_fmt, stream, context=context)
+            # Leaf level: encode elements directly
+            for i, elem in enumerate(v):
+                context.push_path(i)
+                _encode_stream(elem, elem_fmt, stream, context=context, key=i)
+                context.pop_path()
         else:
-            for sub in v:
-                self._encode_level(stream, sub, idx + 1, context)
+            # Non-leaf level: create intermediate nodes for each sub-array
+            for i, sub in enumerate(v):
+                context.push_path(i)
+                with _inspect_scope(stream, context, i, self, sub):
+                    self._encode_level(stream, sub, idx + 1, context)
+                context.pop_path()
 
     def encode(self, value: list[Any], stream: BinaryIO, *, context: Context) -> None:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
-        if getattr(self, "_fast_typecode", None) is not None:
+        # Skip fast-path when inspecting to capture individual element nodes
+        if getattr(self, "_fast_typecode", None) is not None and not context.inspect:
             typecode = self._fast_typecode
             expected = self._fast_expected_count
             # Resolve runtime expected count if dims contain `Ref`s.
@@ -243,8 +251,10 @@ class Array:
 
         # Support greedy (no-dims) arrays: stream elements until exhaustion
         if not self.dims:
-            for elem in value:
-                _encode_stream(elem, self.element_fmt, stream, context=context)
+            for i, elem in enumerate(value):
+                context.push_path(i)
+                _encode_stream(elem, self.element_fmt, stream, context=context, key=i)
+                context.pop_path()
             return
 
         self._encode_level(stream, value, 0, context=context)
@@ -262,13 +272,31 @@ class Array:
             count = dim_def.decode(stream, context=context)
 
         if idx == len(dims) - 1:
-            return [_decode_stream(stream, elem_fmt, context=context)[0] for _ in range(count)]
+            # Leaf level: decode elements directly
+            result = []
+            for i in range(count):
+                context.push_path(i)
+                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                result.append(value)
+                context.pop_path()
+            return result
         else:
-            return [self._decode_level(stream, idx + 1, context) for _ in range(count)]
+            # Non-leaf level: create intermediate nodes for each sub-array
+            result = []
+            for i in range(count):
+                context.push_path(i)
+                with _inspect_scope(stream, context, i, self, None) as node:
+                    sub_result = self._decode_level(stream, idx + 1, context)
+                    if node:
+                        node.value = sub_result
+                result.append(sub_result)
+                context.pop_path()
+            return result
 
     def decode(self, stream: BinaryIO, *, context: Context) -> list[Any]:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
-        if getattr(self, "_fast_typecode", None) is not None:
+        # Skip fast-path when inspecting to capture individual element nodes
+        if getattr(self, "_fast_typecode", None) is not None and not context.inspect:
             typecode = self._fast_typecode
             count = self._fast_expected_count
             # resolve Ref-based count at runtime if necessary
@@ -313,26 +341,39 @@ class Array:
     def _decode_greedy(self, stream: BinaryIO, elem_fmt: Any, context: Context) -> list[Any]:
         elem_size = sizeof(elem_fmt)
 
+        # Try to determine remaining bytes for count-based decoding
+        remaining = None
         if hasattr(stream, "getbuffer"):
             remaining = len(stream.getbuffer()) - stream.tell()
-        else:
+        elif hasattr(stream, "seek"):
             cur = stream.tell()
             end = stream.seek(0, 2)
             stream.seek(cur)
             remaining = end - cur
 
         # If element has fixed size and remaining bytes known, compute count
-        if isinstance(elem_size, int):
+        if remaining is not None and isinstance(elem_size, int):
             count = remaining // elem_size
-            return [_decode_stream(stream, elem_fmt, context=context)[0] for _ in range(count)]
+            result = []
+            for i in range(count):
+                context.push_path(i)
+                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                result.append(value)
+                context.pop_path()
+            return result
 
         # Otherwise, decode in a loop until decoding fails (stream exhausted)
         items: list[Any] = []
+        i = 0
         while True:
             try:
-                v, _ = _decode_stream(stream, elem_fmt, context=context)
-                items.append(v)
+                context.push_path(i)
+                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                items.append(value)
+                context.pop_path()
+                i += 1
             except Exception:
+                context.pop_path()
                 break
         return items
 

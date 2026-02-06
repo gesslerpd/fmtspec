@@ -5,7 +5,7 @@ from io import BytesIO
 from typing import BinaryIO
 
 import fmtspec
-from fmtspec import types
+from fmtspec import format_tree, types
 from fmtspec._inspect import _decode_inspect_stream, _encode_inspect_stream
 
 
@@ -594,3 +594,183 @@ class TestUnseekableStreams:
         assert tree.children[0].key == "header"
         assert len(tree.children[0].children) == 2
         assert tree.children[0].data == b"\x01\x02"
+
+
+class TestArrayInspect:
+    """Tests for array inspection functionality."""
+
+    def test_1d_array_encode_inspect(self):
+        """Test inspection of a 1D array encode."""
+        arr_fmt = types.array(types.u8, 3)
+        obj = [1, 2, 3]
+        data, tree = fmtspec.encode_inspect(obj, arr_fmt)
+
+        assert data == b"\x01\x02\x03"
+        assert tree.key is None
+        assert tree.offset == 0
+        assert tree.size == 3
+        assert tree.data == b"\x01\x02\x03"
+        # Array should have 3 children (one per element)
+        assert len(tree.children) == 3
+
+        # Check individual element nodes
+        assert tree.children[0].key == 0
+        assert tree.children[0].value == 1
+        assert tree.children[0].data == b"\x01"
+        assert tree.children[0].offset == 0
+
+        assert tree.children[1].key == 1
+        assert tree.children[1].value == 2
+        assert tree.children[1].data == b"\x02"
+        assert tree.children[1].offset == 1
+
+        assert tree.children[2].key == 2
+        assert tree.children[2].value == 3
+        assert tree.children[2].data == b"\x03"
+        assert tree.children[2].offset == 2
+
+    def test_1d_array_decode_inspect(self):
+        """Test inspection of a 1D array decode."""
+        arr_fmt = types.array(types.u8, 3)
+        result, tree = fmtspec.decode_inspect(b"\x01\x02\x03", arr_fmt)
+
+        assert result == [1, 2, 3]
+        assert tree.key is None
+        assert tree.offset == 0
+        assert tree.size == 3
+        # Array should have 3 children (one per element)
+        assert len(tree.children) == 3
+
+        # Check individual element nodes
+        assert tree.children[0].key == 0
+        assert tree.children[0].value == 1
+        assert tree.children[0].data == b"\x01"
+
+        assert tree.children[1].key == 1
+        assert tree.children[1].value == 2
+        assert tree.children[1].data == b"\x02"
+
+        assert tree.children[2].key == 2
+        assert tree.children[2].value == 3
+        assert tree.children[2].data == b"\x03"
+
+    def test_2d_array_encode_inspect(self):
+        """Test inspection of a 2D array encode."""
+        arr_fmt = types.array(types.u8, (2, 3))
+        obj = [[1, 2, 3], [4, 5, 6]]
+        data, tree = fmtspec.encode_inspect(obj, arr_fmt)
+
+        print(format_tree(tree))
+
+        assert data == b"\x01\x02\x03\x04\x05\x06"
+        assert tree.size == 6
+        # 2D array with (2,3) dims should have 2 row children
+        assert len(tree.children) == 2
+
+        # First row [1, 2, 3]
+        row0 = tree.children[0]
+        assert row0.key == 0
+        assert len(row0.children) == 3
+        assert [c.value for c in row0.children] == [1, 2, 3]
+        assert [c.key for c in row0.children] == [0, 1, 2]
+
+        # Second row [4, 5, 6]
+        row1 = tree.children[1]
+        assert row1.key == 1
+        assert len(row1.children) == 3
+        assert [c.value for c in row1.children] == [4, 5, 6]
+        assert [c.key for c in row1.children] == [0, 1, 2]
+
+    def test_2d_array_decode_inspect(self):
+        """Test inspection of a 2D array decode."""
+        arr_fmt = types.array(types.u8, (2, 3))
+        result, tree = fmtspec.decode_inspect(b"\x01\x02\x03\x04\x05\x06", arr_fmt)
+
+        assert result == [[1, 2, 3], [4, 5, 6]]
+        assert tree.size == 6
+        # 2D array should have 2 row children with 3 element children each
+        assert len(tree.children) == 2
+        assert len(tree.children[0].children) == 3
+        assert len(tree.children[1].children) == 3
+
+    def test_greedy_array_encode_inspect(self):
+        """Test inspection of a greedy array (no dims) encode."""
+        arr_fmt = types.array(types.u8)  # greedy array
+        obj = [1, 2, 3, 4]
+        data, tree = fmtspec.encode_inspect(obj, arr_fmt)
+
+        assert data == b"\x01\x02\x03\x04"
+        assert len(tree.children) == 4
+
+        for i, child in enumerate(tree.children):
+            assert child.key == i
+            assert child.value == i + 1
+
+    def test_greedy_array_decode_inspect(self):
+        """Test inspection of a greedy array (no dims) decode."""
+        arr_fmt = types.array(types.u8)  # greedy array
+        result, tree = fmtspec.decode_inspect(b"\x01\x02\x03\x04", arr_fmt)
+
+        assert result == [1, 2, 3, 4]
+        assert len(tree.children) == 4
+
+        for i, child in enumerate(tree.children):
+            assert child.key == i
+            assert child.value == i + 1
+
+    def test_array_in_mapping_encode_inspect(self):
+        """Test inspection of array nested in a mapping."""
+        fmt = {
+            "count": types.u8,
+            "data": types.array(types.u16be, 2),
+        }
+        obj = {"count": 2, "data": [0x0102, 0x0304]}
+        data, tree = fmtspec.encode_inspect(obj, fmt)
+
+        assert data == b"\x02\x01\x02\x03\x04"
+        assert len(tree.children) == 2
+
+        # First child is the count field
+        assert tree.children[0].key == "count"
+        assert tree.children[0].value == 2
+
+        # Second child is the array
+        data_node = tree.children[1]
+        assert data_node.key == "data"
+        assert len(data_node.children) == 2
+        assert data_node.children[0].key == 0
+        assert data_node.children[0].value == 0x0102
+        assert data_node.children[1].key == 1
+        assert data_node.children[1].value == 0x0304
+
+    def test_array_in_mapping_decode_inspect(self):
+        """Test inspection of array nested in a mapping decode."""
+        fmt = {
+            "count": types.u8,
+            "data": types.array(types.u16be, 2),
+        }
+        result, tree = fmtspec.decode_inspect(b"\x02\x01\x02\x03\x04", fmt)
+
+        assert result == {"count": 2, "data": [0x0102, 0x0304]}
+        assert len(tree.children) == 2
+
+        data_node = tree.children[1]
+        assert data_node.key == "data"
+        assert len(data_node.children) == 2
+        assert data_node.children[0].value == 0x0102
+        assert data_node.children[1].value == 0x0304
+
+    def test_array_format_tree_output(self):
+        """Test format_tree output with array."""
+        arr_fmt = types.array(types.u8, 3)
+        _, tree = fmtspec.encode_inspect([1, 2, 3], arr_fmt)
+        output = fmtspec.format_tree(tree)
+
+        # Should contain element entries
+        assert "[0]" in output
+        assert "[1]" in output
+        assert "[2]" in output
+        # Should show values
+        assert "value: 1" in output
+        assert "value: 2" in output
+        assert "value: 3" in output

@@ -57,6 +57,7 @@ class Context(Struct, gc=False):
         path: Stack tracking the current path (field names/indices) during serialization.
         inspect: Whether to build an inspection tree.
         inspect_node: Root node of the inspection tree, if enabled.
+        inspect_children: Internal list for managing children during inspection.
     """
 
     parents: deque[Any] = field(default_factory=lambda: deque(({},)))
@@ -64,6 +65,8 @@ class Context(Struct, gc=False):
     fmt: Format | None = None
     inspect: bool = False
     inspect_node: InspectNode | None = None
+    # FUTURE: is this needed? Can we just use inspect_node.children?
+    inspect_children: list[InspectNode] | None = None
 
     def push(self, parent: Any) -> None:
         self.parents.append(parent)

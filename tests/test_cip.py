@@ -4,7 +4,7 @@ from io import BytesIO
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode
+from fmtspec import DecodeError, EncodeError, decode, encode, encode_inspect, format_tree
 from fmtspec._core import _convert, _to_builtins
 from fmtspec.types.cip import (
     ConstructedDataTypeSegment,
@@ -1522,6 +1522,10 @@ class TestMixedDataSegmentEPath:
         data = encode(segments, epath_packed)
         result = decode(data, epath_packed)
 
+        data, tree = encode_inspect(segments, short_sized_padded_epath)
+        print()
+        print(format_tree(tree))
+        print()
         assert len(result) == 4
         assert isinstance(result[3], DataSegment)
         assert result[3].data == b"\x10\x20\x30\x40"

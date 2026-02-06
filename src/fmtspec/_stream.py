@@ -5,9 +5,12 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Buffer, Iterable, Mapping
 from io import BytesIO
-from typing import Any, BinaryIO, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 from ._protocol import Context, Format, InspectNode
+
+if TYPE_CHECKING:
+    from .types import Bitfields
 
 
 class StreamWrapper(Protocol):
@@ -87,7 +90,7 @@ class WriteBufferingStream:
         return bytes(memoryview(self._buffer)[relative_start:relative_end])
 
 
-def _collect_bitfield_groups(fmt: dict):
+def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
     """Collect contiguous Bitfield groups from a mapping format.
 
     Returns a mapping `groups` from the group's start key to a `Bitfields`
@@ -97,7 +100,7 @@ def _collect_bitfield_groups(fmt: dict):
     # TODO: refactor to avoid circular imports
     from .types import Bitfield, Bitfields  # noqa: PLC0415
 
-    groups: dict = {}
+    groups = {}
 
     items_iter = iter(fmt.items())
     pending: tuple[str, object] | None = None
@@ -145,7 +148,54 @@ def _collect_bitfield_groups(fmt: dict):
 
 
 @contextlib.contextmanager
-def _populate_inspect_node(stream: BinaryIO, key, fmt, value, children):
+def _inspect_scope(
+    stream: BinaryIO,
+    context: Context,
+    key,
+    fmt,
+    value,
+    *,
+    track_root: bool = False,
+):
+    """Full-featured context manager for InspectNode lifecycle management.
+
+    Fast no-op when context.inspect is False. Handles:
+    - Node creation with data/size population
+    - Children scope management (context.inspect_children)
+    - Auto-append to parent's children list
+    - Optional root node tracking (context.inspect_node)
+
+    The yielded node's `value` attribute can be updated after creation,
+    useful for decode operations where the value isn't known upfront.
+
+    Args:
+        stream: The binary stream being read/written.
+        context: Serialization context with inspect state.
+        key: Field name, index, or None for root nodes.
+        fmt: The format specification for this node.
+        value: Initial value (can be None, updated via node.value later).
+        track_root: If True and context.inspect_node is None, sets it to this node.
+
+    Usage (Type classes - intermediate nodes):
+        with _inspect_scope(stream, context, i, self, value) as node:
+            # recursive encode/decode...
+            if node:
+                node.value = decoded_result
+
+    Usage (top-level with root tracking):
+        with _inspect_scope(stream, context, name, fmt, obj, track_root=True) as node:
+            # encode/decode operations...
+            pass
+    """
+    if not context.inspect:
+        yield None
+        return
+
+    parent_children = context.inspect_children
+    children: list[InspectNode] = []
+
+    # inline for performance
+    # start populate_inspect_node
     start_offset = stream.tell()
     node = InspectNode(
         key=key,
@@ -155,7 +205,15 @@ def _populate_inspect_node(stream: BinaryIO, key, fmt, value, children):
         offset=start_offset,
         children=children,
     )
+
+    # Track root node if requested and not already set
+    if track_root and not context.inspect_node:
+        context.inspect_node = node
+    context.inspect_children = children
+
+    # yield
     yield node
+
     end_offset = stream.tell()
     # inline extraction of bytes for performance
     get_bytes = getattr(stream, "get_bytes", None)
@@ -168,35 +226,31 @@ def _populate_inspect_node(stream: BinaryIO, key, fmt, value, children):
         raise TypeError(f"Cannot extract bytes from {stream_type}")
     node.data = data
     node.size = len(data)
+    # end populate_inspect_node
+
+    context.inspect_children = parent_children
+    if parent_children is not None:
+        parent_children.append(node)
 
 
-def _encode_stream(  # noqa: PLR0912
+# FUTURE: what should this be? use a sentinel object?
+# None is used for root but could be reused as default key
+# format_tree knows what the root is
+DEFAULT_KEY = None
+
+
+def _encode_stream(
     obj: Any,
     fmt: Format,
     stream: BinaryIO,
     *,
     context: Context,
-    name: str | int | None = None,
+    key: str | int | None = DEFAULT_KEY,
 ) -> InspectNode | None:
     """Encode object to stream, optionally returning inspection node."""
     context.fmt = fmt
-    children = []
 
-    if context.inspect:
-        inspect_ctx_manager = _populate_inspect_node(
-            stream,
-            key=name,
-            fmt=fmt,
-            value=obj,
-            children=children,
-        )
-    else:
-        inspect_ctx_manager = contextlib.nullcontext()
-
-    with inspect_ctx_manager as node:
-        if node and not context.inspect_node:
-            context.inspect_node = node
-
+    with _inspect_scope(stream, context, key, fmt, obj, track_root=True) as node:
         fmt_type = type(fmt)
 
         # type guard for str.encode / bytes.encode (also iterable)
@@ -216,10 +270,10 @@ def _encode_stream(  # noqa: PLR0912
             bitfields = _collect_bitfield_groups(fmt)
             bitfields_remaining = 0
 
-            for key, field_fmt in fmt.items():
+            for inner_key, field_fmt in fmt.items():
                 # if this key is part of a bitfield group
-                if key in bitfields:
-                    _field_fmt = bitfields[key]
+                if inner_key in bitfields:
+                    _field_fmt = bitfields[inner_key]
                     bitfields_remaining = len(_field_fmt.fields) - 1
                     value = {k: obj[k] for k in _field_fmt.fields}
                 elif bitfields_remaining:
@@ -230,14 +284,11 @@ def _encode_stream(  # noqa: PLR0912
                     _field_fmt = field_fmt
                     context.fmt = _field_fmt
                     if getattr(field_fmt, "constant", False):
-                        value = obj.get(key)
+                        value = obj.get(inner_key)
                     else:
-                        value = obj[key]
-                context.push_path(key)
-
-                child = _encode_stream(value, _field_fmt, stream, context=context, name=key)
-                if node:
-                    children.append(child)
+                        value = obj[inner_key]
+                context.push_path(inner_key)
+                _encode_stream(value, _field_fmt, stream, context=context, key=inner_key)
                 context.pop_path()
             context.pop()
 
@@ -245,9 +296,7 @@ def _encode_stream(  # noqa: PLR0912
         elif fmt_type is list or fmt_type is tuple or isinstance(fmt, Iterable):
             for idx, (value, field_fmt) in enumerate(zip(obj, fmt, strict=True)):
                 context.push_path(idx)
-                child = _encode_stream(value, field_fmt, stream, context=context, name=idx)
-                if node:
-                    children.append(child)
+                _encode_stream(value, field_fmt, stream, context=context, key=idx)
                 context.pop_path()
 
         else:
@@ -256,32 +305,17 @@ def _encode_stream(  # noqa: PLR0912
     return node
 
 
-def _decode_stream(  # noqa: PLR0912, PLR0915
+def _decode_stream(  # noqa: PLR0912
     stream: BinaryIO,
     fmt: Format,
     *,
     context: Context,
-    name: str | int | None = None,
+    key: str | int | None = DEFAULT_KEY,
 ) -> tuple[Any, InspectNode | None]:
     """Decode object from stream, optionally returning inspection node."""
     context.fmt = fmt
-    children = []
 
-    if context.inspect:
-        inspect_ctx_manager = _populate_inspect_node(
-            stream,
-            key=name,
-            fmt=fmt,
-            value=None,
-            children=children,
-        )
-    else:
-        inspect_ctx_manager = contextlib.nullcontext()
-
-    with inspect_ctx_manager as node:
-        if node and not context.inspect_node:
-            context.inspect_node = node
-
+    with _inspect_scope(stream, context, key, fmt, None, track_root=True) as node:
         fmt_type = type(fmt)
 
         # type guard for str.encode / bytes.encode (also iterable)
@@ -292,7 +326,6 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
         decode_fn = getattr(fmt, "decode", None)
         if decode_fn:
             result = decode_fn(stream, context=context)
-
             # post-populate the node value
             if node:
                 node.value = result
@@ -311,26 +344,24 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
             bitfields_remaining = 0
             greedy_fmts = {}
 
-            for key, field_fmt in fmt.items():
+            for inner_key, field_fmt in fmt.items():
                 # use sizeof to recursively detect greedy fields?
                 if getattr(field_fmt, "size", ...) is None:
-                    greedy_fmts[key] = field_fmt
+                    greedy_fmts[inner_key] = field_fmt
                 # detect consecutive greedy fields which would otherwise
                 # consume the remainder of the stream ambiguously
                 if len(greedy_fmts) > 1:
                     raise ValueError("multiple greedy items in mapping format")
 
                 # if this key is part of a bitfield group
-                if key in bitfields:
-                    bitfields_fmt = bitfields[key]
+                if inner_key in bitfields:
+                    bitfields_fmt = bitfields[inner_key]
                     bitfields_remaining = len(bitfields_fmt.fields) - 1
                     # decode the combined group and distribute values
-                    context.push_path(key)
-                    value, child = _decode_stream(
-                        stream, fmt=bitfields_fmt, context=context, name=key
-                    )
-                    if node:
-                        children.append(child)
+                    context.push_path(inner_key)
+                    value = _decode_stream(
+                        stream, fmt=bitfields_fmt, context=context, key=inner_key
+                    )[0]
                     # value is a mapping of the group's member values
                     for k, v in value.items():
                         result[k] = v
@@ -340,11 +371,9 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
                     # member already decoded as part of its group; skip
                     continue
                 else:
-                    context.push_path(key)
-                    value, child = _decode_stream(stream, fmt=field_fmt, context=context, name=key)
-                    if node:
-                        children.append(child)
-                    result[key] = value
+                    context.push_path(inner_key)
+                    value = _decode_stream(stream, fmt=field_fmt, context=context, key=inner_key)[0]
+                    result[inner_key] = value
                     context.pop_path()
 
             context.pop()
@@ -359,9 +388,7 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
 
             for idx, field_fmt in enumerate(fmt):
                 context.push_path(idx)
-                value, child = _decode_stream(stream, fmt=field_fmt, context=context, name=idx)
-                if node:
-                    children.append(child)
+                value = _decode_stream(stream, fmt=field_fmt, context=context, key=idx)[0]
                 result.append(value)
                 context.pop_path()
 
