@@ -147,6 +147,56 @@ def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
     return groups
 
 
+def _get_stream_bytes(stream: BinaryIO, start: int, end: int) -> bytes:
+    get_bytes = getattr(stream, "get_bytes", None)
+    if get_bytes:
+        return get_bytes(start, end)
+    if type(stream) is BytesIO:
+        return bytes(stream.getbuffer()[start:end])  # type: ignore
+    raise TypeError(f"Cannot extract bytes from {type(stream)}")
+
+
+def _inspect_leaf(
+    stream: BinaryIO,
+    context: Context,
+    key: str | int | None,
+    fmt: Format,
+    value: Any,
+    start: int,
+    *,
+    prepend: bool = False,
+) -> None:
+    """Create a leaf InspectNode and append it to the current children list.
+
+    Useful when a Type manually calls ``fmt.encode()`` / ``fmt.decode()``
+    (bypassing ``_encode_stream`` / ``_decode_stream``) but still needs an
+    inspection entry.  No-op when inspection is disabled.
+
+    Args:
+        stream: The binary stream being read/written.
+        context: Serialization context with inspect state.
+        key: Field name, index, or descriptive key for the node.
+        fmt: The format specification used.
+        value: The Python value encoded/decoded.
+        start: Stream offset *before* the encode/decode call.
+        prepend: If True, insert at position 0 instead of appending.
+    """
+    if context.inspect_children is None:
+        return
+    data = _get_stream_bytes(stream, start, stream.tell())
+    node = InspectNode(
+        key=key,
+        fmt=fmt,
+        data=data,
+        value=value,
+        offset=start,
+    )
+    if prepend:
+        context.inspect_children.insert(0, node)
+    else:
+        context.inspect_children.append(node)
+
+
 @contextlib.contextmanager
 def _inspect_scope(
     stream: BinaryIO,
@@ -194,8 +244,6 @@ def _inspect_scope(
     parent_children = context.inspect_children
     children: list[InspectNode] = []
 
-    # inline for performance
-    # start populate_inspect_node
     start_offset = stream.tell()
     node = InspectNode(
         key=key,
@@ -211,22 +259,12 @@ def _inspect_scope(
         context.inspect_node = node
     context.inspect_children = children
 
-    # yield
     yield node
 
     end_offset = stream.tell()
-    # inline extraction of bytes for performance
-    get_bytes = getattr(stream, "get_bytes", None)
-    stream_type = type(stream)
-    if get_bytes:
-        data = get_bytes(start_offset, end_offset)
-    elif stream_type is BytesIO:
-        data = bytes(stream.getbuffer()[start_offset:end_offset])  # type: ignore
-    else:
-        raise TypeError(f"Cannot extract bytes from {stream_type}")
+    data = _get_stream_bytes(stream, start_offset, end_offset)
     node.data = data
     node.size = len(data)
-    # end populate_inspect_node
 
     context.inspect_children = parent_children
     if parent_children is not None:

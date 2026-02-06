@@ -6,15 +6,15 @@ including field names, formats, raw bytes, and values.
 
 from __future__ import annotations
 
-from collections.abc import Buffer, Iterable, Mapping
+from collections.abc import Buffer, Iterable, Iterator, Mapping
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, overload
 
 from ._core import _decode_stream_impl, _encode_stream_impl
-from ._protocol import Format, InspectNode
 
 if TYPE_CHECKING:
     from ._dataview import ViewNode
+    from ._protocol import Format, InspectNode
 
 
 def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:

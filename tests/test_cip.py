@@ -6,6 +6,7 @@ import pytest
 
 from fmtspec import DecodeError, EncodeError, decode, encode, encode_inspect, format_tree
 from fmtspec._core import _convert, _to_builtins
+from fmtspec._inspect import decode_inspect
 from fmtspec.types.cip import (
     ConstructedDataTypeSegment,
     # data segment types
@@ -1522,9 +1523,12 @@ class TestMixedDataSegmentEPath:
         data = encode(segments, epath_packed)
         result = decode(data, epath_packed)
 
-        data, tree = encode_inspect(segments, short_sized_padded_epath)
+        data, tree_en = encode_inspect(segments, short_sized_padded_epath)
+        val, tree_de = decode_inspect(data, short_sized_padded_epath)
+        assert val == segments == result
         print()
-        print(format_tree(tree))
+        print(format_tree(tree_en))
+        print(format_tree(tree_de))
         print()
         assert len(result) == 4
         assert isinstance(result[3], DataSegment)

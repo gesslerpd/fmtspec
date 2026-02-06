@@ -51,6 +51,33 @@ INT_CONVERTIBLE_TYPES = (
 )
 
 
+def _fix_inspect_offsets(children: list[InspectNode], parent_offset: int) -> None:
+    """Recursively fix offsets for children that came from sub-streams.
+
+    Detects children whose offset is behind where the next contiguous byte
+    should be (i.e. they were created against a ``BytesIO`` starting at 0)
+    and shifts them so they are contiguous with preceding siblings.
+    """
+    next_offset = parent_offset
+    for child in children:
+        if child.offset < next_offset:
+            shift = next_offset - child.offset
+            child.offset = next_offset
+            if child.children:
+                _shift_children(child.children, shift)
+        next_offset = child.offset + child.size
+        if child.children:
+            _fix_inspect_offsets(child.children, child.offset)
+
+
+def _shift_children(children: list[InspectNode], shift: int) -> None:
+    """Shift offsets of all nodes in a list by a fixed amount."""
+    for node in children:
+        node.offset += shift
+        if node.children:
+            _shift_children(node.children, shift)
+
+
 def _create_new_instance[T](cls: type[T], data: dict[str, Any]) -> T:
     instance = cls.__new__(cls)
 
@@ -284,6 +311,10 @@ def _encode_stream_impl(
             inspect_node=ctx.inspect_node,
         ) from e
 
+    if tree:
+        # FUTURE: do this for exceptions inspect_node too?
+        _fix_inspect_offsets(tree.children, tree.offset)
+
     return tree
 
 
@@ -393,6 +424,10 @@ def _decode_stream_impl[T](
                 path=(),
                 inspect_node=ctx.inspect_node,
             ) from e
+
+    if tree:
+        # FUTURE: do this for exceptions inspect_node too?
+        _fix_inspect_offsets(tree.children, tree.offset)
 
     return result, tree
 
