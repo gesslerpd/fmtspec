@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._stream import _decode_stream, _encode_stream
+from .._stream import _decode_stream, _encode_stream, _inspect_leaf
 from ._ref import Ref
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ class Sized:
     fmt: Format
     align: int | None = None
     fill: bytes = b"\x00"
+    # FUTURE: allow factor to be 2 callables for encode/decode?
     factor: int = 1
     size: int | EllipsisType = field(init=False, repr=False, compare=False)
 
@@ -84,10 +85,13 @@ class Sized:
                 stream.write(self.fill * pad)
             return
 
-        # length is a format/type: write length first
+        # length is a format/type: write length first, then data
         if n % self.factor != 0:
             raise ValueError(f"Encoded length {n} is not divisible by factor {self.factor}")
-        self.length.encode(n // self.factor, stream, context=context)
+        length_value = n // self.factor
+        start = stream.tell()
+        self.length.encode(length_value, stream, context=context)
+        _inspect_leaf(stream, context, "--size--", self.length, length_value, start, prepend=True)
         stream.write(encoded)
         pad = self._pad_len(n)
         if pad:
@@ -118,7 +122,10 @@ class Sized:
             return inner
 
         # length is a format: decode it from stream, then read that many bytes
-        length = self.length.decode(stream, context=context) * self.factor
+        start = stream.tell()
+        length_value = self.length.decode(stream, context=context)
+        _inspect_leaf(stream, context, "--size--", self.length, length_value, start)
+        length = length_value * self.factor
         data = stream.read(length)
         if len(data) != length:
             raise ValueError(f"Expected {length} bytes, got {len(data)}")
