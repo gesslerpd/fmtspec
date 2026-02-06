@@ -6,21 +6,15 @@ including field names, formats, raw bytes, and values.
 
 from __future__ import annotations
 
-from collections.abc import Buffer, Iterable, Iterator, Mapping
+from collections.abc import Buffer, Iterable, Mapping
 from io import BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, assert_never, cast, overload
+from typing import TYPE_CHECKING, Any, overload
 
-import msgspec
-
-from ._core import _convert, _to_builtins
-from ._exceptions import DecodeError, EncodeError, ShapeError
-from ._protocol import Context, Format, InspectNode
-from ._stream import BufferingStream, WriteBufferingStream, _decode_stream, _encode_stream
+from ._core import _decode_stream_impl, _encode_stream_impl
+from ._protocol import Format, InspectNode
 
 if TYPE_CHECKING:
     from ._dataview import ViewNode
-
-# FUTURE: refactor to remove lots of duplication with _core encode/decode functions?
 
 
 def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
@@ -42,41 +36,8 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
         >>> print(format_tree(tree))
     """
     stream = BytesIO()
-    tree = _encode_inspect_stream(obj, stream, fmt)
+    tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
     return stream.getvalue(), tree
-
-
-def _encode_inspect_stream(obj: Any, stream: BinaryIO, fmt: Format) -> InspectNode:
-    # Convert iterators to lists first since msgspec.to_builtins doesn't support them
-    if isinstance(obj, Iterator):
-        obj = tuple(obj)
-
-    # FUTURE: enable recursive to support standard classes?
-    obj = _to_builtins(obj, recursive=False)
-
-    # Wrap stream to capture bytes for inspection
-    buffering_stream = WriteBufferingStream(stream)
-    ctx = Context(inspect=True)
-    try:
-        # specify key=None for root node
-        tree = _encode_stream(obj, fmt, cast("BinaryIO", buffering_stream), context=ctx, key=None)
-    except EncodeError as e:  # pragma: no cover
-        assert_never(e)  # type: ignore
-        raise
-    except Exception as e:
-        raise EncodeError(
-            message=repr(e),
-            obj=obj,
-            stream=stream,
-            fmt=ctx.fmt,
-            context=ctx.parents[-1],
-            cause=e,
-            path=tuple(ctx.path),
-            inspect_node=ctx.inspect_node,
-        ) from e
-
-    assert tree is not None  # inspect=True guarantees a return value
-    return tree
 
 
 @overload
@@ -109,74 +70,7 @@ def decode_inspect[T](
         >>> print(format_tree(tree))
     """
     stream = BytesIO(data)
-    return _decode_inspect_stream(stream, fmt, shape=shape)
-
-
-@overload
-def _decode_inspect_stream[T](
-    stream: BinaryIO, fmt: Format, *, shape: type[T]
-) -> tuple[T, InspectNode]: ...
-
-
-@overload
-def _decode_inspect_stream(
-    stream: BinaryIO, fmt: Format, *, shape: None = None
-) -> tuple[Any, InspectNode]: ...
-
-
-def _decode_inspect_stream[T](
-    stream: BinaryIO, fmt: Format, *, shape: type[T] | None = None
-) -> tuple[T | Any, InspectNode]:
-    # Wrap stream to capture bytes for inspection
-    buffering_stream = cast("BinaryIO", BufferingStream(stream))
-    ctx = Context(inspect=True)
-    try:
-        # specify key=None for root node
-        result, tree = _decode_stream(buffering_stream, fmt, context=ctx, key=None)
-    except DecodeError as e:  # pragma: no cover
-        assert_never(e)  # type: ignore
-        raise
-    except Exception as e:
-        # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
-        context = ctx.parents[-1]
-        obj = context
-        if shape is not None:
-            try:
-                obj = _convert(context, shape, recursive=False)
-            except msgspec.DecodeError:
-                pass
-        raise DecodeError(
-            message=repr(e),
-            obj=obj,
-            stream=stream,
-            fmt=ctx.fmt,
-            context=context,
-            cause=e,
-            path=tuple(ctx.path),
-            inspect_node=ctx.inspect_node,
-        ) from e
-
-    # narrow type
-    assert tree is not None
-
-    if shape is not None:
-        # FUTURE: enable recursive to support standard classes?
-        try:
-            result = _convert(result, shape, recursive=False)
-        except msgspec.DecodeError as e:
-            # FUTURE: rename ConvertError?
-            raise ShapeError(
-                message=f"Decoded object does not conform to expected shape {shape}: {e}",
-                obj=result,
-                stream=stream,
-                fmt=fmt,
-                # context empty here?
-                context=result,
-                cause=e,
-                path=(),
-                inspect_node=ctx.inspect_node,
-            ) from e
-    return result, tree
+    return _decode_stream_impl(stream, fmt, shape=shape, inspect=True)
 
 
 def format_tree(  # noqa: PLR0913

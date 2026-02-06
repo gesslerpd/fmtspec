@@ -6,7 +6,7 @@ from typing import BinaryIO
 
 import fmtspec
 from fmtspec import format_tree, types
-from fmtspec._inspect import _decode_inspect_stream, _encode_inspect_stream
+from fmtspec._core import _decode_stream_impl, _encode_stream_impl
 
 
 class UnseekableStream(BinaryIO):
@@ -297,7 +297,7 @@ class TestEncodeInspectStream:
         """Test stream inspection of a simple integer type."""
         fmt = types.Int(byteorder="big", signed=False, size=2)
         stream = BytesIO()
-        tree = _encode_inspect_stream(0x0102, stream, fmt)
+        tree = _encode_stream_impl(0x0102, stream, fmt, inspect=True)
 
         # Verify stream contains encoded data
         assert stream.getvalue() == b"\x01\x02"
@@ -318,7 +318,7 @@ class TestEncodeInspectStream:
         }
         obj = {"x": 0x01, "y": 0x0203}
         stream = BytesIO()
-        tree = _encode_inspect_stream(obj, stream, fmt)
+        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
         assert stream.getvalue() == b"\x01\x02\x03"
         assert tree.key is None
@@ -354,7 +354,7 @@ class TestEncodeInspectStream:
         }
         obj = {"header": {"version": 1, "flags": 2}, "data": 0x0304}
         stream = BytesIO()
-        tree = _encode_inspect_stream(obj, stream, fmt)
+        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
         assert stream.getvalue() == b"\x01\x02\x03\x04"
         assert tree.size == 4
@@ -372,7 +372,7 @@ class TestEncodeInspectStream:
         stream.write(b"\xff\xff")  # Write some initial data
         start_pos = stream.tell()
 
-        tree = _encode_inspect_stream(0x0102, stream, fmt)
+        tree = _encode_stream_impl(0x0102, stream, fmt, inspect=True)
 
         # Stream should be positioned after the written data
         assert stream.tell() == start_pos + 2
@@ -392,9 +392,9 @@ class TestEncodeInspectStream:
         # Using encode_inspect
         data_bytes, tree1 = fmtspec.encode_inspect(obj, fmt)
 
-        # Using encode_inspect_stream
+        # Using _encode_stream_impl
         stream = BytesIO()
-        tree2 = _encode_inspect_stream(obj, stream, fmt)
+        tree2 = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
         assert stream.getvalue() == data_bytes
         assert tree1.offset == tree2.offset
@@ -410,7 +410,7 @@ class TestDecodeInspectStream:
         """Test stream inspection of a simple integer decode."""
         fmt = types.Int(byteorder="big", signed=False, size=2)
         stream = BytesIO(b"\x01\x02")
-        result, tree = _decode_inspect_stream(stream, fmt)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True)
 
         assert result == 0x0102
         assert tree.key is None
@@ -426,7 +426,7 @@ class TestDecodeInspectStream:
             "y": types.Int(byteorder="big", signed=False, size=2),
         }
         stream = BytesIO(b"\x01\x02\x03")
-        result, tree = _decode_inspect_stream(stream, fmt)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True)
 
         assert result == {"x": 0x01, "y": 0x0203}
         assert tree.size == 3
@@ -448,7 +448,7 @@ class TestDecodeInspectStream:
             "data": types.Int(byteorder="big", signed=False, size=2),
         }
         stream = BytesIO(b"\x01\x02\x03\x04")
-        result, tree = _decode_inspect_stream(stream, fmt)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True)
 
         assert result == {"header": {"version": 1, "flags": 2}, "data": 0x0304}
         assert tree.size == 4
@@ -462,7 +462,7 @@ class TestDecodeInspectStream:
         """Test that stream position is correct after decoding."""
         fmt = types.Int(byteorder="big", signed=False, size=2)
         stream = BytesIO(b"\x01\x02\xff\xff")
-        result, tree = _decode_inspect_stream(stream, fmt)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True)
 
         # Stream should be positioned after the decoded data
         assert stream.tell() == 2
@@ -484,9 +484,9 @@ class TestDecodeInspectStream:
         # Using decode_inspect
         result1, tree1 = fmtspec.decode_inspect(data, fmt)
 
-        # Using decode_inspect_stream
+        # Using decode_stream_inspect
         stream = BytesIO(data)
-        result2, tree2 = _decode_inspect_stream(stream, fmt)
+        result2, tree2 = _decode_stream_impl(stream, fmt, inspect=True)
 
         assert result1 == result2
         assert tree1.offset == tree2.offset
@@ -507,7 +507,7 @@ class TestDecodeInspectStream:
             "y": types.Int(byteorder="big", signed=False, size=1),
         }
         stream = BytesIO(b"\x01\x02")
-        result, tree = _decode_inspect_stream(stream, fmt, shape=Point)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True, shape=Point)
 
         assert isinstance(result, Point)
         assert result.x == 1
@@ -529,7 +529,7 @@ class TestUnseekableStreams:
         # Use unseekable stream
         backing = BytesIO()
         stream = UnseekableStream(backing)
-        tree = _encode_inspect_stream(obj, stream, fmt)
+        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
         # Verify data was written
         assert backing.getvalue() == b"\x01\x02\x03"
@@ -555,7 +555,7 @@ class TestUnseekableStreams:
         # Use unseekable stream
         backing = BytesIO(b"\x01\x02\x03")
         stream = UnseekableStream(backing)
-        result, tree = _decode_inspect_stream(stream, fmt)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True)
 
         # Result should be correct
         assert result == {"x": 0x01, "y": 0x0203}
@@ -585,7 +585,7 @@ class TestUnseekableStreams:
         obj = {"header": {"version": 1, "flags": 2}, "data": 0x0304}
         backing = BytesIO()
         stream = UnseekableStream(backing)
-        tree = _encode_inspect_stream(obj, stream, fmt)
+        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
         # captures data even for nested unseekable streams
         assert tree.size == 4

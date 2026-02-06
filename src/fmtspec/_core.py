@@ -3,13 +3,18 @@ import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
 from copy import copy
 from io import BytesIO
-from typing import Any, BinaryIO, assert_never, get_type_hints, overload
+from typing import Any, BinaryIO, Literal, assert_never, cast, get_type_hints, overload
 
 import msgspec
 
 from ._exceptions import DecodeError, EncodeError, ShapeError
-from ._protocol import Context, Format
-from ._stream import _decode_stream, _encode_stream
+from ._protocol import Context, Format, InspectNode
+from ._stream import (
+    BufferingStream,
+    WriteBufferingStream,
+    _decode_stream,
+    _encode_stream,
+)
 from ._utils import derive_fmt, sizeof
 
 # types for msgspec to preserve during to_builtin / convert calls
@@ -221,12 +226,21 @@ def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
     return obj
 
 
-def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None:
-    """Encode formatted object into a binary stream.
+@overload
+def _encode_stream_impl(
+    obj: Any, stream: BinaryIO, fmt: Format | None, *, inspect: Literal[False] = False
+) -> None: ...
 
-    If `fmt` is None, attempt to derive the format from the object's class
-    using `derive_fmt`.
-    """
+
+@overload
+def _encode_stream_impl(
+    obj: Any, stream: BinaryIO, fmt: Format | None, *, inspect: Literal[True]
+) -> InspectNode: ...
+
+
+def _encode_stream_impl(
+    obj: Any, stream: BinaryIO, fmt: Format | None = None, *, inspect: bool = False
+) -> InspectNode | None:
     # Convert iterators to lists first since msgspec.to_builtins doesn't support them
     if isinstance(obj, Iterator):
         obj = tuple(obj)
@@ -242,10 +256,19 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
     # perf: only recursively convert once as pre-process operation
     # FUTURE: enable recursive to support standard classes?
     obj = _to_builtins(obj, recursive=False)
-    ctx = Context()
+
+    ctx = Context(inspect=inspect)
+
+    # Wrap stream to capture bytes for inspection
+    if inspect:
+        buffering_stream = WriteBufferingStream(stream)
+        write_stream = cast("BinaryIO", buffering_stream)
+    else:
+        write_stream = stream
+
     try:
         # specify key=None for root node
-        _encode_stream(obj, fmt, stream, context=ctx, key=None)
+        tree = _encode_stream(obj, fmt, write_stream, context=ctx, key=None)
     except EncodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -258,38 +281,78 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
             context=ctx.parents[-1],
             cause=e,
             path=tuple(ctx.path),
-            inspect_node=None,
+            inspect_node=ctx.inspect_node,
         ) from e
 
-
-@overload
-def decode_stream[T](stream: BinaryIO, fmt: Format | None = None, *, shape: type[T]) -> T: ...
+    return tree
 
 
-@overload
-def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, shape: None = None) -> Any: ...
+def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None:
+    """Encode formatted object into a binary stream.
 
-
-def decode_stream[T](
-    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T] | None = None
-) -> T | Any:
-    """Decode a binary stream into formatted object.
-
-    If `fmt` is None, attempt to derive the format from `shape`.
+    If `fmt` is None, attempt to derive the format from the object's class
+    using `derive_fmt`.
     """
+    _encode_stream_impl(obj, stream, fmt, inspect=False)
+
+
+@overload
+def _decode_stream_impl[T](
+    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T], inspect: Literal[False] = False
+) -> tuple[T, None]: ...
+
+
+@overload
+def _decode_stream_impl(
+    stream: BinaryIO,
+    fmt: Format | None = None,
+    *,
+    shape: None = None,
+    inspect: Literal[False] = False,
+) -> tuple[Any, None]: ...
+
+
+@overload
+def _decode_stream_impl[T](
+    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T], inspect: Literal[True]
+) -> tuple[T, InspectNode]: ...
+
+
+@overload
+def _decode_stream_impl(
+    stream: BinaryIO, fmt: Format | None = None, *, shape: None = None, inspect: Literal[True]
+) -> tuple[Any, InspectNode]: ...
+
+
+def _decode_stream_impl[T](
+    stream: BinaryIO,
+    fmt: Format | None = None,
+    *,
+    shape: type[T] | None = None,
+    inspect: bool = False,
+) -> tuple[T, InspectNode | None] | tuple[Any, InspectNode | None]:
     # derive format from the provided shape when not given
     if fmt is None:
         if shape is None:
             raise ValueError("Either fmt or shape must be provided for decoding.")
         fmt = derive_fmt(shape)
+
     # FUTURE: reenable generic Annotated formats?
     # else:
     #     fmt = _normalize_format(fmt)
 
-    ctx = Context()
+    ctx = Context(inspect=inspect)
+
+    # Wrap stream to capture bytes for inspection
+    if inspect:
+        buffering_stream = BufferingStream(stream)
+        read_stream: BinaryIO = cast("BinaryIO", buffering_stream)
+    else:
+        read_stream = stream
+
     try:
         # specify key=None for root node
-        result, _ = _decode_stream(stream, fmt, context=ctx, key=None)
+        result, tree = _decode_stream(read_stream, fmt, context=ctx, key=None)
     except DecodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -310,7 +373,7 @@ def decode_stream[T](
             context=context,
             cause=e,
             path=tuple(ctx.path),
-            inspect_node=None,
+            inspect_node=ctx.inspect_node,
         ) from e
     # perf: only recursively convert once as post-process operation
     if shape is not None:
@@ -328,9 +391,28 @@ def decode_stream[T](
                 context=result,
                 cause=e,
                 path=(),
-                inspect_node=None,
+                inspect_node=ctx.inspect_node,
             ) from e
-    return result
+
+    return result, tree
+
+
+@overload
+def decode_stream[T](stream: BinaryIO, fmt: Format | None = None, *, shape: type[T]) -> T: ...
+
+
+@overload
+def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, shape: None = None) -> Any: ...
+
+
+def decode_stream[T](
+    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T] | None = None
+) -> T | Any:
+    """Decode a binary stream into formatted object.
+
+    If `fmt` is None, attempt to derive the format from `shape`.
+    """
+    return _decode_stream_impl(stream, fmt, shape=shape)[0]
 
 
 def encode(obj: Any, fmt: Format | None = None) -> bytes:
