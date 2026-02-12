@@ -398,6 +398,30 @@ class TestNetworkSegment:
 # CIPSegmentFmt Tests (Type Protocol)
 # ---------------------------------------------------------------------------
 class TestCIPSegmentFmt:
+    @pytest.mark.parametrize(
+        "segment",
+        [
+            PortSegment(port=1, link_address=2),
+            LogicalSegment(type=LogicalSegmentType.type_class_id, value=0x02),
+            NetworkSegment(type=NetworkSegmentType.scheduled, data=b"\x01"),
+            SymbolicSegment(symbol=b"Tag"),
+            DataSegment(type=DataSegmentType.simple, data=b"\x12\x34"),
+            ElementaryDataTypeSegment(type_code=0xC4),
+            ConstructedDataTypeSegment(type_code=0xA2, data=b"\x01\x02"),
+        ],
+    )
+    def test_decode_supports_direct_segment_type_protocol(self, segment) -> None:
+        """decode() supports each segment's direct Type protocol formatter."""
+        fmt = segment.__fmt__
+        data = encode(segment, fmt)
+
+        # test without explicitly passing fmt (should use segment's own __fmt__)
+        assert data == encode(segment)
+
+        result = decode(data, fmt)
+
+        assert result == segment == decode(data, shape=type(segment))
+
     def test_unknown_segment_type_raises(self) -> None:
         """CIPSegmentFmt should raise for unknown segment types."""
         data = b"\xe0\x00"  # Reserved type
