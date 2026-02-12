@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Self
 
 import msgspec
 
-from ._array import array
-from ._bitfield import Bitfield, Bitfields
-from ._int import Int, u8le, u16le, u32le, u64le
-from ._sized import Sized
+from .._array import array
+from .._bitfield import Bitfield, Bitfields
+from .._int import Int, u8le, u16le, u32le, u64le
+from .._sized import Sized
 
 if TYPE_CHECKING:
     from types import EllipsisType
