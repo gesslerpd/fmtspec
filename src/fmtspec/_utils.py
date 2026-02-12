@@ -40,7 +40,7 @@ def sizeof(fmt: Format) -> Size:
 
 # cache for performance on repeated calls with the same class
 @cache
-def derive_fmt(cls: type) -> dict[str, Format]:
+def derive_fmt(cls: type) -> Format:
     """Derive format specification from a class with Annotated fields.
 
     Args:
@@ -50,6 +50,11 @@ def derive_fmt(cls: type) -> dict[str, Format]:
         A dictionary mapping field names to their format specifications.
 
     """
+    # protocol for custom format specification on any class
+    fmt: Format | None = getattr(cls, "__fmt__", None)
+    if fmt:
+        return fmt
+
     type_hints = get_type_hints(cls, include_extras=True)
     result: dict[str, Format] = {}
 

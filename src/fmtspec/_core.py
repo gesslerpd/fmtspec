@@ -1,4 +1,5 @@
 import inspect
+import io
 import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
 from copy import copy
@@ -487,7 +488,7 @@ def decode[T](
     # If requested, check for any trailing data after successful decode
     if strict:
         cur = stream.tell()
-        end = stream.seek(0, 2)
+        end = stream.seek(0, io.SEEK_END)
         stream.seek(cur)
         remaining = end - cur
         if remaining:

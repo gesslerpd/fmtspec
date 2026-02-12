@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import sys
 from array import array as _parray
 from collections.abc import Iterable, Iterator
@@ -308,7 +309,7 @@ class Array:
                     remaining = len(stream.getbuffer()) - stream.tell()
                 else:
                     cur = stream.tell()
-                    end = stream.seek(0, 2)
+                    end = stream.seek(0, io.SEEK_END)
                     stream.seek(cur)
                     remaining = end - cur
                 count = remaining // (self._fast_elem_size or 1)
@@ -347,7 +348,7 @@ class Array:
             remaining = len(stream.getbuffer()) - stream.tell()
         elif hasattr(stream, "seek"):
             cur = stream.tell()
-            end = stream.seek(0, 2)
+            end = stream.seek(0, io.SEEK_END)
             stream.seek(cur)
             remaining = end - cur
 
