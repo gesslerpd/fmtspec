@@ -4,6 +4,7 @@ import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
 from copy import copy
 from io import BytesIO
+from types import NoneType
 from typing import Any, BinaryIO, Literal, assert_never, cast, get_type_hints, overload
 
 import msgspec
@@ -17,6 +18,22 @@ from ._stream import (
     _encode_stream,
 )
 from ._utils import derive_fmt, sizeof
+
+
+class frozendict(dict):
+    def __hash__(self) -> int:
+        return hash(tuple(sorted(self.items())))
+
+    # for roundtrip eq checks
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Mapping):
+            return dict.__eq__(self, other)
+        # tuples should also compare equal if they have the same items
+        try:
+            return dict.__eq__(self, dict(other))
+        except (TypeError, ValueError):
+            return NotImplemented
+
 
 # types for msgspec to preserve during to_builtin / convert calls
 # FUTURE: allow disabling to_builtins call so advanced users can call themselves?
@@ -169,6 +186,17 @@ def _msgspec_decode_hook(cls: type, obj: Any) -> Any:
 #         return {k: _preserve_types(v) for k, v in obj.items()}
 #     return obj
 
+PRIMITIVE_TYPES = (*BUILTIN_TYPES, int, str, float, bool, NoneType)
+
+
+def is_all_primitive(obj: Any) -> bool:
+    if isinstance(obj, dict):
+        return all(is_all_primitive(k) and is_all_primitive(v) for k, v in obj.items())
+    if isinstance(obj, (list, tuple)):
+        return all(is_all_primitive(v) for v in obj)
+
+    return isinstance(obj, PRIMITIVE_TYPES)
+
 
 def _to_builtins(obj: Any, recursive: bool) -> Any:
     # First, extract any preserved types from collections
@@ -221,6 +249,9 @@ def _to_builtins(obj: Any, recursive: bool) -> Any:
         # Restore preserved types after conversion
         # return restore_preserved(result)
     except TypeError:
+        # fallback for unsupported types that already consist of all primitives
+        if is_all_primitive(obj):
+            return obj
         if not recursive:
             raise
         types = get_type_hints(type(obj))

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import EllipsisType
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 from .._stream import _decode_stream, _encode_stream
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import EllipsisType
 
     from .._protocol import Context, Format
 
