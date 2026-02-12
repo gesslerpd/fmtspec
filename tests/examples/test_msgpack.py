@@ -17,13 +17,17 @@ Supported types:
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, BinaryIO
+from dataclasses import dataclass, field
+from types import NoneType
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal, Self
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode, types
+from fmtspec import DecodeError, EncodeError, decode, encode, encode_inspect, format_tree, types
 
 if TYPE_CHECKING:
+    from types import EllipsisType
+
     from fmtspec._protocol import Context
 
 
@@ -57,26 +61,27 @@ bin16 = types.Sized(length=types.u16, fmt=types.Bytes())
 bin32 = types.Sized(length=types.u32, fmt=types.Bytes())
 
 # Self-referential format using Lazy
-msgpack_ref = types.Lazy(lambda: msgpack)
+# msgpack_ref = types.Lazy(lambda: msgpack)
 
 # Count-prefixed arrays/maps (after the tag)
-array16 = types.array(msgpack_ref, dims=types.u16)
-array32 = types.array(msgpack_ref, dims=types.u32)
-map16 = types.array((msgpack_ref, msgpack_ref), dims=types.u16)
-map32 = types.array((msgpack_ref, msgpack_ref), dims=types.u32)
+# array16 = types.array(msgpack_ref, dims=types.u16)
+# array32 = types.array(msgpack_ref, dims=types.u32)
+# map16 = types.array((msgpack_ref, msgpack_ref), dims=types.u16)
+# map32 = types.array((msgpack_ref, msgpack_ref), dims=types.u32)
 
 # =============================================================================
 # Encoding Helpers
 # =============================================================================
+BYTES = {i: bytes([i]) for i in range(256)}
 
 
 def _encode_int(value: int, stream: BinaryIO) -> None:
     """Encode integer using smallest representation."""
     # 1-byte encodings (fixint)
     if 0 <= value <= 0x7F:
-        stream.write(bytes([value]))  # positive fixint
+        stream.write(BYTES[value])  # positive fixint
     elif -0x20 <= value < 0:
-        stream.write(bytes([value & 0xFF]))  # negative fixint
+        stream.write(BYTES[value & 0xFF])  # negative fixint
     # 2-byte encodings
     elif 0x80 <= value <= 0xFF:
         stream.write(b"\xcc")
@@ -115,7 +120,8 @@ def _encode_str(value: str, stream: BinaryIO, context) -> None:
     n = len(data)
     if n <= 31:
         # avoid temporary concatenation
-        stream.write(bytes([0xA0 | n]))
+        # fixstr
+        stream.write(BYTES[0xA0 | n])
         stream.write(data)
     elif n <= 0xFF:
         stream.write(b"\xd9")
@@ -147,89 +153,101 @@ def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
 # =============================================================================
 
 
-def _decode_uint(stream: BinaryIO, tag: int) -> int:
-    """Decode unsigned integer by tag."""
-    if tag == 0xCC:
-        result = types.u8.decode(stream)
-    elif tag == 0xCD:
-        result = types.u16.decode(stream)
-    elif tag == 0xCE:
-        result = types.u32.decode(stream)
-    else:
-        result = types.u64.decode(stream)
-    return result
+_FLOAT_BY_TAG = {
+    FLOAT32: types.f32,
+    FLOAT64: types.f64,
+}
+
+_UINT_BY_TAG = {
+    0xCC: types.u8,
+    0xCD: types.u16,
+    0xCE: types.u32,
+    0xCF: types.u64,
+}
+
+_SINT_BY_TAG = {
+    0xD0: types.i8,
+    0xD1: types.i16,
+    0xD2: types.i32,
+    0xD3: types.i64,
+}
+
+_STR_BY_TAG = {
+    STR8: str8,
+    STR16: str16,
+    STR32: str32,
+}
+
+_BIN_BY_TAG = {
+    BIN8: bin8,
+    BIN16: bin16,
+    BIN32: bin32,
+}
 
 
-def _decode_sint(stream: BinaryIO, tag: int) -> int:
-    """Decode signed integer by tag."""
-    if tag == 0xD0:
-        result = types.i8.decode(stream)
-    elif tag == 0xD1:
-        result = types.i16.decode(stream)
-    elif tag == 0xD2:
-        result = types.i32.decode(stream)
-    else:
-        result = types.i64.decode(stream)
-    return result
-
-
-def _decode_str_tagged(stream: BinaryIO, tag: int, context) -> str:
-    """Decode string by tag."""
-    if tag == STR8:
-        result = str8.decode(stream, context=context)
-    elif tag == STR16:
-        result = str16.decode(stream, context=context)
-    else:
-        result = str32.decode(stream, context=context)
-    return result
-
-
-def _decode_bin_tagged(stream: BinaryIO, tag: int, context) -> bytes:
-    """Decode binary by tag."""
-    if tag == BIN8:
-        result = bin8.decode(stream, context=context)
-    elif tag == BIN16:
-        result = bin16.decode(stream, context=context)
-    else:
-        result = bin32.decode(stream, context=context)
-    return result
-
-
-def _decode_array_tagged(stream: BinaryIO, tag: int, context: Context) -> list:
-    """Decode array by tag."""
-    if tag == ARRAY16:
-        result = array16.decode(stream, context=context)
-    else:
-        result = array32.decode(stream, context=context)
-    return result
-
-
-def _decode_map_tagged(stream: BinaryIO, tag: int, context: Context) -> dict:
-    """Decode map by tag."""
-    if tag == MAP16:
-        result = map16.decode(stream, context=context)
-    else:
-        result = map32.decode(stream, context=context)
-    return dict(result)
-
-
+@dataclass(frozen=True, slots=True)
 class MsgPack:
     """MessagePack serialization format using composed fmtspec.types."""
 
-    size = None
+    size: ClassVar[EllipsisType] = ...  # dynamic size
+
+    float_precision: Literal[4, 8] = 8
+    """Float precision to use when encoding floats."""
+
+    array_type: type = list
+    map_type: type = dict
+
+    _float_type: types.Float = field(init=False, repr=False, compare=False)
+    _float_tag: int = field(init=False, repr=False, compare=False)
+    _map_by_tag: dict[int, types.Array] = field(
+        init=False, repr=False, compare=False, default_factory=dict
+    )
+    _array_by_tag: dict[int, types.Array] = field(
+        init=False, repr=False, compare=False, default_factory=dict
+    )
+    _keysafe: Self = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        keysafe = self
+        if self.array_type is not tuple and self.array_type is not tuple:
+            # conditionalize to avoid infinite recursion
+            keysafe = self.__class__(
+                self.float_precision,
+                tuple,
+                tuple,
+            )
+        object.__setattr__(self, "_keysafe", keysafe)
+        object.__setattr__(
+            self,
+            "_float_tag",
+            FLOAT32 if self.float_precision == 4 else FLOAT64,
+        )
+        # will error if float_precision is invalid
+        object.__setattr__(
+            self,
+            "_float_type",
+            _FLOAT_BY_TAG[self._float_tag],
+        )
+        # defer these so they can reference `self`
+        self._map_by_tag[MAP16] = types.array((self._keysafe, self), dims=types.u16)
+        self._map_by_tag[MAP32] = types.array((self._keysafe, self), dims=types.u32)
+
+        self._array_by_tag[ARRAY16] = types.array(self, dims=types.u16)
+        self._array_by_tag[ARRAY32] = types.array(self, dims=types.u32)
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
         """Encode a Python value to MessagePack format."""
+        # fast checks for performance
         t = type(value)
-        if t is type(None):
+        if t is NoneType:
             stream.write(b"\xc0")
         elif t is bool:
             stream.write(b"\xc3" if value else b"\xc2")
         elif t is int:
             _encode_int(value, stream)
         elif t is float:
-            stream.write(b"\xcb")
-            types.f64.encode(value, stream)
+            stream.write(BYTES[self._float_tag])
+            self._float_type.encode(value, stream)
         elif t is str:
             _encode_str(value, stream, context)
         elif t is bytes or t is bytearray or t is memoryview:
@@ -238,35 +256,59 @@ class MsgPack:
             self._encode_array(list(value), stream, context)
         elif t is dict:
             self._encode_map(value, stream, context)
+
+        # slower checks
+        elif issubclass(t, NoneType):
+            stream.write(b"\xc0")
+        elif issubclass(t, bool):
+            stream.write(b"\xc3" if value else b"\xc2")
+        elif issubclass(t, int):
+            _encode_int(value, stream)
+        elif issubclass(t, float):
+            stream.write(BYTES[self._float_tag])
+            self._float_type.encode(value, stream)
+        elif issubclass(t, str):
+            _encode_str(value, stream, context)
+        elif issubclass(t, (bytes, bytearray, memoryview)):
+            _encode_bin(bytes(value), stream, context)
+        elif issubclass(t, (list, tuple)):
+            self._encode_array(list(value), stream, context)
+        elif issubclass(t, dict):
+            self._encode_map(value, stream, context)
         else:
             raise TypeError(f"Unsupported type for msgpack: {t.__name__}")
 
     def _encode_array(self, value: list, stream: BinaryIO, context: Context) -> None:
         n = len(value)
         if n <= 15:
-            stream.write(bytes([0x90 | n]))
+            # fixarray
+            stream.write(BYTES[0x90 | n])
+            # don't use fmtspec.types.array for performance
             for item in value:
                 self.encode(item, stream, context=context)
         elif n <= 0xFFFF:
             stream.write(b"\xdc")
-            array16.encode(value, stream, context=context)
+            # FUTURE: don't use fmtspec.types.array here for performance?
+            self._array_by_tag[ARRAY16].encode(value, stream, context=context)
         else:
             stream.write(b"\xdd")
-            array32.encode(value, stream, context=context)
+            # FUTURE: don't use fmtspec.types.array here for performance?
+            self._array_by_tag[ARRAY32].encode(value, stream, context=context)
 
     def _encode_map(self, value: dict, stream: BinaryIO, context: Context) -> None:
         n = len(value)
         if n <= 15:
-            stream.write(bytes([0x80 | n]))
+            stream.write(BYTES[0x80 | n])
+            # don't use fmtspec.types.array for performance
             for k, v in value.items():
                 self.encode(k, stream, context=context)
                 self.encode(v, stream, context=context)
         elif n <= 0xFFFF:
             stream.write(b"\xde")
-            map16.encode(value.items(), stream, context=context)
+            self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
         else:
             stream.write(b"\xdf")
-            map32.encode(value.items(), stream, context=context)
+            self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode a MessagePack value from stream."""
@@ -279,10 +321,21 @@ class MsgPack:
         if tag <= 0x7F:
             result = tag  # positive fixint
         elif tag <= 0x8F:
-            result = self._decode_map_n(stream, tag & 0x0F, context)
+            # fixmap
+            # don't use fmtspec.types.array for performance
+            result = self.map_type(
+                (self.decode(stream, context=context), self.decode(stream, context=context))
+                for _ in range(tag & 0x0F)
+            )
         elif tag <= 0x9F:
-            result = self._decode_array_n(stream, tag & 0x0F, context)
+            # fixarray
+            # don't use fmtspec.types.array for performance
+            result = self.array_type(
+                self.decode(stream, context=context) for _ in range(tag & 0x0F)
+            )
         elif tag <= 0xBF:
+            # result = types.Str(tag & 0x1F).decode(stream)
+            # don't use fmtspec.types.Str for performance
             result = stream.read(tag & 0x1F).decode("utf-8")  # fixstr
         elif tag >= 0xE0:
             result = tag - 256  # negative fixint
@@ -299,39 +352,32 @@ class MsgPack:
         elif tag == 0xC3:
             result = True
         elif BIN8 <= tag <= BIN32:
-            result = _decode_bin_tagged(stream, tag, context)
-        elif tag == FLOAT32:
-            result = types.f32.decode(stream)
-        elif tag == FLOAT64:
-            result = types.f64.decode(stream)
+            result = _BIN_BY_TAG[tag].decode(stream, context=context)
+        elif FLOAT32 <= tag <= FLOAT64:
+            result = _FLOAT_BY_TAG[tag].decode(stream)
         elif 0xCC <= tag <= 0xCF:
-            result = _decode_uint(stream, tag)
+            result = _UINT_BY_TAG[tag].decode(stream)
         elif 0xD0 <= tag <= 0xD3:
-            result = _decode_sint(stream, tag)
+            result = _SINT_BY_TAG[tag].decode(stream)
         elif STR8 <= tag <= STR32:
-            result = _decode_str_tagged(stream, tag, context)
+            result = _STR_BY_TAG[tag].decode(stream, context=context)
         elif ARRAY16 <= tag <= ARRAY32:
-            result = _decode_array_tagged(stream, tag, context)
+            result = self.array_type(self._array_by_tag[tag].decode(stream, context=context))
+            # FUTURE: don't use fmtspec.types.array here for performance?
         elif MAP16 <= tag <= MAP32:
-            result = _decode_map_tagged(stream, tag, context)
+            result = self.map_type(
+                tuple(kv_pair) for kv_pair in self._map_by_tag[tag].decode(stream, context=context)
+            )
+            # FUTURE: don't use fmtspec.types.array here for performance?
         else:
             raise ValueError(f"Unknown msgpack tag: 0x{tag:02x}")
 
         return result
 
-    def _decode_array_n(self, stream: BinaryIO, n: int, context: Context) -> list:
-        return [self.decode(stream, context=context) for _ in range(n)]
-
-    def _decode_map_n(self, stream: BinaryIO, n: int, context: Context) -> dict:
-        return {
-            self.decode(stream, context=context): self.decode(stream, context=context)
-            for _ in range(n)
-        }
-
 
 # Singleton instance
 msgpack = MsgPack()
-
+msgpack_f32 = MsgPack(float_precision=4)
 
 # =============================================================================
 # Tests
@@ -848,6 +894,9 @@ class TestMsgPackMap:
             assert result == value, f"Roundtrip failed for {value!r}"
 
 
+from fmtspec._core import frozendict
+
+
 class TestMsgPackComplex:
     """Tests for complex/combined data structures."""
 
@@ -867,6 +916,17 @@ class TestMsgPackComplex:
             "nested_map": {"a": 1, "b": [True, False]},
             "empty_array": [],
             "empty_map": {},
+            (1, 2, 3): "tuple_key",
+            None: "none_key",
+            True: "true_key",
+            False: "false_key",
+            42: "int_key",
+            -42: "neg_int_key",
+            3.14: "float_key",
+            b"": "empty_bytes_key",
+            frozendict(
+                {"frozen": "dict", "more": b"data", "nested": frozendict({42: "int_key"})}
+            ): "frozendict_key",
         }
         data = encode(value, msgpack)
         result = decode(data, msgpack)
@@ -918,6 +978,12 @@ class TestMsgPackComplex:
         }
         data = encode(value, msgpack)
         result = decode(data, msgpack)
+
+        data_inspect, tree = encode_inspect(value, msgpack)
+        assert data == data_inspect
+        print()
+        print(format_tree(tree))
+        print()
         assert result == value
 
 
