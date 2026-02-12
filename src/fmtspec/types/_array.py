@@ -263,8 +263,7 @@ class Array:
     def encode(self, value: list[Any], stream: BinaryIO, *, context: Context) -> None:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
         # Skip fast-path when inspecting to capture individual element nodes
-        if getattr(self, "_fast_typecode", None) is not None and not context.inspect:
-            typecode = self._fast_typecode
+        if (typecode := getattr(self, "_fast_typecode", None)) and not context.inspect:
             expected = self._fast_expected_count
 
             if self.dims:
@@ -332,8 +331,7 @@ class Array:
     def decode(self, stream: BinaryIO, *, context: Context) -> list[Any]:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
         # Skip fast-path when inspecting to capture individual element nodes
-        if getattr(self, "_fast_typecode", None) is not None and not context.inspect:
-            typecode = self._fast_typecode
+        if (typecode := getattr(self, "_fast_typecode", None)) and not context.inspect:
             count = self._fast_expected_count
             # resolve Ref-based count at runtime if necessary
             if count is None and self.dims:
