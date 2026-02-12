@@ -55,6 +55,7 @@ class Context(Struct, gc=False):
         parents: Stack of parent objects for accessing sibling fields.
         fmt: Current format being processed (for error reporting).
         path: Stack tracking the current path (field names/indices) during serialization.
+        store: Store options/state in dictionary for use between formats.
         inspect: Whether to build an inspection tree.
         inspect_node: Root node of the inspection tree, if enabled.
         inspect_children: Internal list for managing children during inspection.
@@ -63,6 +64,7 @@ class Context(Struct, gc=False):
     parents: deque[Any] = field(default_factory=lambda: deque(({},)))
     path: deque[str | int] = field(default_factory=deque)
     fmt: Format | None = None
+    store: dict[Any, Any] = field(default_factory=dict)
     inspect: bool = False
     inspect_node: InspectNode | None = None
     # FUTURE: is this needed? Can we just use inspect_node.children?

@@ -1,7 +1,5 @@
 """Tests for CIP (Common Industrial Protocol) types."""
 
-from io import BytesIO
-
 import pytest
 
 from fmtspec import DecodeError, EncodeError, decode, encode, encode_inspect, format_tree
@@ -1660,17 +1658,21 @@ class TestLogicalSegmentErrors:
         """Test encoding logical segment with 3-byte value raises error."""
         # 3 bytes doesn't match 1, 2, or 4 byte formats in LOGICAL_FORMAT_SIZE_MAP
 
-        stream = BytesIO()
-        with pytest.raises(ValueError, match="logical value too large"):
-            LogicalSegment.encode(
-                {
-                    "segment_type": 1,
-                    "type": 0,  # class_id
-                    "value": b"\x01\x02\x03",  # 3 bytes - invalid size
-                },
-                stream,
-                False,
-            )
+        segment = LogicalSegment(
+            type=LogicalSegmentType.type_class_id,
+            value=b"\x01\x02\x03",  # 3 bytes - invalid size
+        )
+        with pytest.raises(EncodeError, match="logical value too large"):
+            encode(segment, cip_segment)
+
+    def test_value_3_bytes_error_padded(self) -> None:
+        """Test padded encoding logical segment with 3-byte value raises error."""
+        segment = LogicalSegment(
+            type=LogicalSegmentType.type_class_id,
+            value=b"\x01\x02\x03",  # 3 bytes - invalid size
+        )
+        with pytest.raises(EncodeError, match="logical value too large"):
+            encode(segment, cip_segment_padded)
 
 
 class TestLogicalSegmentSpecialDecode:
@@ -1780,27 +1782,58 @@ class TestSymbolicSegmentExtendedFormats:
         so ext_type_val is used directly.
         """
 
-        # Use numeric_symbol_usint format directly with bytes
-        stream = BytesIO()
-        # This exercises the `else: ext_type_val = ext_type` branch
-        SymbolicSegment.encode(
-            {
-                "symbol": b"\x42",
-                "ext_type": SymbolicSegmentExtendedFormat.numeric_symbol_usint,
-            },
-            stream,
-            False,
+        # Use numeric_symbol_usint format directly with bytes.
+        # This exercises the `else: ext_type_val = ext_type` branch.
+        segment = SymbolicSegment(
+            symbol=b"\x42",
+            ext_type=SymbolicSegmentExtendedFormat.numeric_symbol_usint,
         )
-        # Verify something was written
-        assert stream.tell() > 0
+        data = encode(segment, cip_segment)
+        assert data == b"\x60\xc6\x42"
+
+        decoded = decode(data, cip_segment)
+        assert isinstance(decoded, SymbolicSegment)
+        assert decoded.symbol == 0x42
+        assert decoded.ext_type == SymbolicSegmentExtendedFormat.numeric_symbol_usint
+
+    def test_bytes_with_numeric_ext_type_padded(self) -> None:
+        """Test padded symbolic segment with bytes data and numeric extended format."""
+        segment = SymbolicSegment(
+            symbol=b"\x42",
+            ext_type=SymbolicSegmentExtendedFormat.numeric_symbol_usint,
+        )
+        data = encode(segment, cip_segment_padded)
+        assert data == b"\x60\xc6\x42"
+
+        decoded = decode(data, cip_segment_padded)
+        assert isinstance(decoded, SymbolicSegment)
+        assert decoded.symbol == 0x42
+        assert decoded.ext_type == SymbolicSegmentExtendedFormat.numeric_symbol_usint
 
     def test_unsupported_symbol_type_error(self) -> None:
         """Test that unsupported symbol type raises error."""
-        # Manually create a value dict with unsupported type
+        # Bypass msgspec.Struct constructor type-checking by encoding a dict directly.
+        with pytest.raises(EncodeError, match="Unsupported symbol type"):
+            encode(
+                {
+                    "segment_type": 3,  # SegmentType.symbolic
+                    "symbol": 3.14,
+                    "ext_type": None,
+                },
+                cip_segment,
+            )
 
-        stream = BytesIO()
-        with pytest.raises(TypeError, match="Unsupported symbol type"):
-            SymbolicSegment.encode({"symbol": 3.14, "ext_type": None}, stream, False)
+    def test_unsupported_symbol_type_error_padded(self) -> None:
+        """Test padded encoding of unsupported symbol type raises error."""
+        with pytest.raises(EncodeError, match="Unsupported symbol type"):
+            encode(
+                {
+                    "segment_type": 3,  # SegmentType.symbolic
+                    "symbol": 3.14,
+                    "ext_type": None,
+                },
+                cip_segment_padded,
+            )
 
 
 class TestSymbolicSegmentShortAscii:
