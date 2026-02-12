@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from fmtspec import EncodeError, decode, encode, types
+from fmtspec import DecodeError, EncodeError, decode, encode, types
 
 
 def test_iterable_array():
@@ -72,6 +72,63 @@ def test_array_invalid_dims_raises():
 
     with pytest.raises(ValueError, match="positive integers"):
         types.array(u8, (-1,))
+
+
+def test_array_zero_leaf_dim_1d_roundtrip():
+    u8 = types.u8le
+    arr = types.array(u8, 0)
+
+    data = encode([], arr)
+    assert data == b""
+    assert arr.size == 0
+
+    res = decode(b"", arr)
+    assert res == []
+
+
+def test_array_zero_leaf_dim_2d_roundtrip():
+    u8 = types.u8le
+    arr = types.array(u8, (3, 0))
+
+    obj = [[], [], []]
+    data = encode(obj, arr)
+    assert data == b""
+    assert arr.size == 0
+
+    res = decode(b"", arr)
+    assert res == obj
+
+
+def test_array_zero_leaf_dim_encode_mismatch_raises():
+    u8 = types.u8
+
+    arr0 = types.array(u8, 0)
+    with pytest.raises(EncodeError, match=r"dims\[0\]=0, got 1"):
+        encode([1], arr0)
+
+    arr_3_0 = types.array(u8, (3, 0))
+    with pytest.raises(EncodeError, match=r"dims\[0\]=3, got 2"):
+        encode([[], []], arr_3_0)
+
+    with pytest.raises(EncodeError, match=r"dims\[1\]=0, got 1"):
+        encode([[], [1], []], arr_3_0)
+
+
+def test_array_decode_insufficient_bytes_raises():
+    u8 = types.u8
+    arr = types.array(u8, 3)
+
+    # third element is missing
+    with pytest.raises(DecodeError, match=r"didn't return enough bytes"):
+        decode(b"\x01\x02", arr)
+
+
+def test_array_zero_leaf_dim_decode_strict_excess_raises():
+    u8 = types.u8le
+    arr0 = types.array(u8, 0)
+
+    with pytest.raises(DecodeError, match=r"Excess data after decoding"):
+        decode(b"\x01", arr0, strict=True)
 
 
 def test_prefixed_array_roundtrip():

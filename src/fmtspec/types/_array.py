@@ -42,11 +42,11 @@ def flatten(nd_list: Iterable[Any]) -> Iterable[Any]:
             yield item
 
 
-def _unflatten_build(it: Iterator[Any], dims: tuple[int], level: int) -> list[Any]:
+def _unflatten_build(it: Iterator[Any], dims: tuple[int, ...], level: int) -> list[Any]:
     count = dims[level]
-    if count <= 0:
-        raise ValueError("Array dimensions must be positive integers.")
     if level == len(dims) - 1:
+        if count < 0:
+            raise ValueError("Last array dimension must be non-negative.")
         out: list[Any] = []
         for _ in range(count):
             try:
@@ -54,10 +54,12 @@ def _unflatten_build(it: Iterator[Any], dims: tuple[int], level: int) -> list[An
             except StopIteration:
                 raise ValueError("Not enough elements to unflatten")
         return out
+    if count <= 0:
+        raise ValueError("Array dimension must be positive.")
     return [_unflatten_build(it, dims, level + 1) for _ in range(count)]
 
 
-def unflatten(flat_list: Iterable[Any], dims: tuple[int]) -> list[Any]:
+def unflatten(flat_list: Iterable[Any], dims: tuple[int, ...]) -> list[Any]:
     if not dims:
         raise ValueError("dims must be non-empty")
     return _unflatten_build(iter(flat_list), dims, 0)
@@ -65,7 +67,7 @@ def unflatten(flat_list: Iterable[Any], dims: tuple[int]) -> list[Any]:
 
 def _resolve_dims_product(
     dims: tuple[int | Type | Ref, ...], context: Context | None = None
-) -> int | None:
+) -> tuple[int | None, tuple[int, ...]]:
     """Resolve a product of `dims` where each dim is an int or a `Ref`.
 
     If `context` is provided, `Ref`s will be resolved using it. If
@@ -77,19 +79,46 @@ def _resolve_dims_product(
     prefix or if resolving a `Ref` fails or cannot be done.
     """
     prod: int = 1
+    resolved_dims: list[int] = []
     for d in dims:
         if isinstance(d, int):
             prod *= d
+            resolved_dims.append(d)
         elif isinstance(d, Ref):
             if context is None:
-                return None
+                return None, tuple(resolved_dims)
             try:
-                prod *= d.resolve(context)
+                dim = d.resolve(context)
             except Exception:
-                return None
+                return None, tuple(resolved_dims)
+            resolved_dims.append(dim)
+            prod *= dim
         else:
-            return None
-    return prod
+            return None, tuple(resolved_dims)
+    return prod, tuple(resolved_dims)
+
+
+def _validate_value_shape(value: Any, dims: tuple[int, ...], level: int = 0) -> None:
+    """Validate nested list/tuple structure against resolved integer dims.
+
+    Raises ValueError with the same "expected dims[i]=X, got Y" phrasing used
+    by the slow-path encoder so callers get consistent EncodeError messages.
+    """
+
+    expected = dims[level]
+    try:
+        actual = len(value)
+    except Exception:
+        actual = None
+
+    if actual != expected:
+        raise ValueError(f"Dimension mismatch: expected dims[{level}]={expected}, got {actual}.")
+
+    if level == len(dims) - 1:
+        return
+
+    for item in value:
+        _validate_value_shape(item, dims, level + 1)
 
 
 # FUTURE: simple array helper, need a format `class Array: ...` later
@@ -125,10 +154,11 @@ class Array:
         greedy = not dims
         sdims: list[int] = []
 
-        # validate static integer dims; string dims are resolved at runtime
-        for d in dims:
+        # Validate static integer dims; non-int dims are resolved at runtime.
+        # A zero-sized dimension is allowed only for the last dimension.
+        for idx, d in enumerate(dims):
             if isinstance(d, int):
-                if d <= 0:
+                if d < 0 or (d == 0 and idx != len(dims) - 1):
                     raise ValueError("Array dimensions must be positive integers.")
                 sdims.append(d)
             else:
@@ -188,7 +218,7 @@ class Array:
                     fast_typecode = None
                 else:
                     # compute static expected product if all dims are ints
-                    fast_expected = _resolve_dims_product(self.dims, None)
+                    fast_expected, _ = _resolve_dims_product(self.dims, None)
 
             fast_bomismatch = elem.byteorder != sys.byteorder
 
@@ -236,19 +266,24 @@ class Array:
         if getattr(self, "_fast_typecode", None) is not None and not context.inspect:
             typecode = self._fast_typecode
             expected = self._fast_expected_count
-            # Resolve runtime expected count if dims contain `Ref`s.
-            if expected is None and self.dims:
-                expected = _resolve_dims_product(self.dims, context)
+
+            if self.dims:
+                # When dims are present (non-greedy), always validate the nested
+                # structure against the resolved dims. This catches cases like
+                # dims=(3, 0) where the flattened element count is 0
+                if expected is None:
+                    expected, resolved_dims = _resolve_dims_product(self.dims, context)
+                else:
+                    resolved_dims: tuple[int, ...] = self.dims  # type: ignore (tuple[int] guaranteed)
+                _validate_value_shape(value, resolved_dims)
 
             # For multi-dimensional arrays, flatten before writing.
-            # For greedy arrays (no dims) `expected` will be None.
-            data_vals = [int(v) for v in flatten(value)]
-            if expected is None or len(data_vals) == expected:
-                arr = _parray(typecode, data_vals)
-                if self._fast_byteorder_mismatch and (self._fast_elem_size or 0) > 1:
-                    arr.byteswap()
-                arr.tofile(stream)
-                return
+            data_vals = [v for v in flatten(value)]
+            arr = _parray(typecode, data_vals)
+            if self._fast_byteorder_mismatch and (self._fast_elem_size or 0) > 1:
+                arr.byteswap()
+            arr.tofile(stream)
+            return
 
         # Support greedy (no-dims) arrays: stream elements until exhaustion
         if not self.dims:
@@ -302,7 +337,9 @@ class Array:
             count = self._fast_expected_count
             # resolve Ref-based count at runtime if necessary
             if count is None and self.dims:
-                count = _resolve_dims_product(self.dims, context)
+                count, resolved_dims = _resolve_dims_product(self.dims, context)
+            else:
+                resolved_dims: tuple[int, ...] = self.dims  # type: ignore (tuple[int] guaranteed)
             # for greedy or unknown count, compute remaining bytes
             if count is None:
                 if hasattr(stream, "getbuffer"):
@@ -322,15 +359,9 @@ class Array:
             lst = arr.tolist()
             # If this is a multi-dimensional fixed-shape array, rebuild
             # the nested structure from the flattened list.
-            if self.dims and len(self.dims) > 1:
+            if len(self.dims) > 1:
                 # build resolved dims tuple of ints
-                resolved_dims: list[int] = []
-                for d in self.dims:
-                    if isinstance(d, int):
-                        resolved_dims.append(d)
-                    else:
-                        resolved_dims.append(d.resolve(context))
-                return unflatten(lst, tuple(resolved_dims))
+                return unflatten(lst, resolved_dims)
             return lst
 
         # Support greedy (no-dims) arrays: read elements until exhaustion

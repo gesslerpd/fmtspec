@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import EllipsisType
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 from .._stream import _decode_stream, _encode_stream
@@ -38,7 +39,7 @@ class Lazy:
     For module-level singletons, this is essentially free (just a name lookup).
     """
 
-    size: ClassVar[None] = None
+    size: ClassVar[EllipsisType] = ...
 
     get_format: Callable[[], Format]
 
