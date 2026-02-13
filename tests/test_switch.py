@@ -30,9 +30,7 @@ def test_decode_unknown_case_returns_raw_bytes() -> None:
     fmt = {
         "type": types.u16,
         "body": types.Switch(
-            key=types.Ref("type"),
-            cases={1: {"x": types.u16}},
-            default=None,
+            key=types.Ref("type"), cases={1: {"x": types.u16}}, default=types.bytes_
         ),
     }
 
@@ -70,7 +68,7 @@ def test_encode_unknown_case_raw_bytes() -> None:
         "body": types.Switch(
             key=types.Ref("type"),
             cases={1: {"x": types.u16}},
-            default=None,
+            default=types.bytes_,  # Unknown cases write raw bytes
         ),
     }
 
@@ -86,6 +84,7 @@ def test_roundtrip() -> None:
 
     fmt = {
         "type": types.u16,
+        "padding": types.Bytes(2),
         "body": types.Switch(
             key=types.Ref("type"),
             cases={
@@ -95,11 +94,17 @@ def test_roundtrip() -> None:
         ),
     }
 
-    obj1 = {"type": 1, "body": {"a": 10, "b": 20}}
-    assert decode(encode(obj1, fmt), fmt) == obj1
+    obj1 = {"type": 1, "padding": b"\x02\x03", "body": {"a": 10, "b": 20}}
 
-    obj2 = {"type": 2, "body": {"x": 100, "y": 200}}
-    assert decode(encode(obj2, fmt), fmt) == obj2
+    data = encode(obj1, fmt)
+    assert data == b"\x00\x01\x02\x03\x0a\x14"  # type=1, padding, then body
+    assert decode(data, fmt) == obj1
+
+    obj2 = {"type": 2, "padding": b"\x02\x03", "body": {"x": 100, "y": 200}}
+    data = encode(obj2, fmt)
+    assert data == b"\x00\x02\x02\x03\x00\x64\x00\xc8"  # type=2, padding, then body
+
+    assert decode(data, fmt) == obj2
 
 
 def test_decode_missing_key_raises() -> None:
@@ -148,7 +153,7 @@ def test_little_endian_prefix() -> None:
         "type": types.u16,
         "body": types.Switch(
             key=types.Ref("type"),
-            cases={},
+            cases={0x1: types.Bytes(3)},
         ),
     }
 
@@ -166,15 +171,15 @@ def test_different_prefix_sizes() -> None:
     """Switch should support different prefix sizes."""
     fmt1 = {
         "type": types.u8,
-        "body": types.Switch(key=types.Ref("type"), cases={}),
+        "body": types.Switch(key=types.Ref("type"), cases={}, default=types.bytes_),
     }
     obj = {"type": 1, "body": b"\xaa\xbb"}
     data1 = encode(obj, fmt1)
     assert data1 == b"\x01\xaa\xbb"  # type=1, data
 
     fmt4 = {
-        "type": types.u8,
-        "body": types.Switch(key=types.Ref("type"), cases={}),
+        "type": types.u16,
+        "body": types.Switch(key=types.Ref("type"), cases={}, default=types.bytes_),
     }
-    data4 = encode(obj, fmt4)
-    assert data4 == b"\x01\xaa\xbb"  # type=1, data
+    data1 = encode(obj, fmt4)
+    assert data1 == b"\x00\x01\xaa\xbb"  # type=1, data

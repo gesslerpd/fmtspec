@@ -8,34 +8,34 @@ decoders and an optional encoding dispatch path.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from io import BytesIO
-from typing import TYPE_CHECKING, Annotated, Any, BinaryIO, ClassVar, get_args, get_origin
+from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
+
+import msgspec
 
 from .._stream import _decode_stream, _encode_stream
-from .._utils import _normalize_format, derive_fmt
+from .._utils import derive_fmt
+from ._ref import Ref
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from types import EllipsisType
 
     from .._protocol import Context, Format
-    from ._ref import Ref
 
 
-@dataclass(frozen=True, slots=True)
-class RangeDecoder:
-    """Helper for decoding tag ranges where tag encodes partial data.
+def _get_struct_tag_info(tp: type) -> tuple[Any, str] | None:
+    config = getattr(tp, "__struct_config__", None)
+    if config is None:
+        return None
 
-    Mirrors the previous `RangeDecoder` used by the tagged-union helper.
-    """
+    tag = getattr(config, "tag", None)
+    tag_field = getattr(config, "tag_field", None)
+    if tag is None or tag_field is None:
+        return None
 
-    min_tag: int
-    max_tag: int
-    decoder: Callable[[BinaryIO, int, Context], Any]
-
-    def matches(self, tag: int) -> bool:
-        return self.min_tag <= tag <= self.max_tag
+    return tag, tag_field
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,17 +53,16 @@ class Switch:
     cases: dict[Any, Format]
     default: Format | None = None
 
-    def _get_format(self, key_value: Any) -> Format | None:
-        return self.cases.get(key_value, self.default)
+    def _get_fmt(self, key_value: Any) -> Format:
+        fmt = self.cases.get(key_value, self.default)
+        if fmt is None:
+            raise KeyError(f"Key {key_value!r} not found in cases and no default provided")
+        return fmt
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
         key_value = self.key.resolve(context)
-        fmt = self._get_format(key_value)
-        if fmt is None:
-            # Historically Switch wrote raw bytes when default is None
-            stream.write(value)
-        else:
-            _encode_stream(value, fmt, stream, context=context)
+        fmt = self._get_fmt(key_value)
+        _encode_stream(value, fmt, stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode using either key-mode or tag-mode dispatch.
@@ -74,10 +73,7 @@ class Switch:
         """
         inner_data = stream.read()
         key_value = self.key.resolve(context)
-        fmt = self._get_format(key_value)
-
-        if fmt is None:
-            return inner_data
+        fmt = self._get_fmt(key_value)
 
         inner_stream = BytesIO(inner_data)
         return _decode_stream(inner_stream, fmt, context=context)[0]
@@ -88,65 +84,84 @@ class TaggedUnion:
     size: ClassVar[EllipsisType] = ...
 
     tag: Format | Ref
-    fmt_map: dict[int | range, Any]
+    fmt_map: dict[Any, Any] = field(default_factory=dict)
     # runtime mappings populated in __post_init__
-    fmt_by_tag: dict[Any, Any] | None = None
-    encoders_by_type: dict[type, tuple[Any, Any]] | None = None
+    fmt_by_tag: dict[Any, Any] = field(default_factory=dict)
+    struct_cls_by_tag: dict[Any, type] = field(default_factory=dict)
+    struct_tag_field: str | None = None
 
     def __post_init__(self) -> None:
-        fmt_map_norm: dict[Any, Any] = {}
-        enc_by_type: dict[type, tuple[Any, Any]] = {}
+        normalized_fmt_by_tag: dict[Any, Any] = {}
+        struct_cls_by_tag: dict[Any, type] = {}
+        struct_tag_field: str | None = None
 
-        for tag_val, fmt_val in (self.fmt_map or {}).items():
-            if isinstance(fmt_val, type):
-                fmt_norm = derive_fmt(fmt_val)
-                fmt_map_norm[tag_val] = fmt_norm
-                enc_by_type[fmt_val] = (tag_val, fmt_norm)
-                continue
+        for struct_cls in self.fmt_map.values():
+            if (struct_tag_info := _get_struct_tag_info(struct_cls)) is None:
+                raise ValueError("TaggedUnion only supports msgspec tagged Struct classes")
 
-            fmt_norm = _normalize_format(fmt_val)
-            fmt_map_norm[tag_val] = fmt_norm
+            resolved_tag, resolved_tag_field = struct_tag_info
+            if struct_tag_field is None:
+                struct_tag_field = resolved_tag_field
+            elif struct_tag_field != resolved_tag_field:
+                raise ValueError("All Struct branches must share the same tag_field")
 
-            origin = get_origin(fmt_val)
-            if origin is Annotated:
-                base = get_args(fmt_val)[0]
-                if isinstance(base, type):
-                    enc_by_type[base] = (tag_val, fmt_norm)
+            normalized_fmt_by_tag[resolved_tag] = derive_fmt(struct_cls)
+            struct_cls_by_tag[resolved_tag] = struct_cls
 
-        # Always set the normalized map; store encoders only if any were found
-        object.__setattr__(self, "fmt_by_tag", fmt_map_norm)
-        object.__setattr__(self, "encoders_by_type", enc_by_type or None)
+        if (
+            struct_tag_field is not None
+            and isinstance(self.tag, Ref)
+            and self.tag.key != struct_tag_field
+        ):
+            raise ValueError(
+                f"TaggedUnion tag Ref key '{self.tag.key}' does not match Struct tag_field '{struct_tag_field}'"
+            )
+
+        object.__setattr__(self, "fmt_by_tag", normalized_fmt_by_tag)
+        object.__setattr__(self, "struct_cls_by_tag", struct_cls_by_tag)
+        object.__setattr__(self, "struct_tag_field", struct_tag_field)
+
+    def _resolve_tag_for_encode(
+        self, value: Mapping[Any, Any], *, context: Context
+    ) -> tuple[Any, bool]:
+        if isinstance(self.tag, Ref):
+            resolved_tag = self.tag.resolve(context)
+            value_tag = value.get(self.struct_tag_field, resolved_tag)
+            if value_tag != resolved_tag:
+                raise ValueError(f"Tag mismatch: expected {resolved_tag!r}, got {value_tag!r}")
+            return resolved_tag, False
+        return value.get(self.struct_tag_field), True
+
+    def _decode_tag(self, stream: BinaryIO, *, context: Context) -> Any:
+        if isinstance(self.tag, Ref):
+            return self.tag.resolve(context)
+        return _decode_stream(stream, self.tag, context=context)[0]
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
-        # Fast path: type-based dispatch
-        if self.encoders_by_type:
-            for t, mapping in self.encoders_by_type.items():
-                if isinstance(value, t):
-                    tag_val, fmt = mapping
-                    _encode_stream(tag_val, self.tag, stream, context=context)
-                    _encode_stream(value, fmt, stream, context=context)
-                    return
+        unknown_type = ValueError("Unknown type")
+        if not isinstance(value, Mapping) or self.struct_tag_field is None:
+            raise unknown_type
 
-        # Fallback: attempt each format until one succeeds
-        for tag_val, fmt in (self.fmt_by_tag or {}).items():
-            try:
-                tmp = BytesIO()
-                _encode_stream(value, fmt, tmp, context=context)
-            except Exception:
-                continue
+        tag_val, write_tag = self._resolve_tag_for_encode(value, context=context)
+        if tag_val is None:
+            raise unknown_type
 
+        fmt = self.fmt_by_tag.get(tag_val)
+        if fmt is None:
+            raise unknown_type
+
+        if write_tag:
             _encode_stream(tag_val, self.tag, stream, context=context)
-            stream.write(tmp.getvalue())
-            return
-
-        raise ValueError("Unknown type")
+        _encode_stream(value, fmt, stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
-        tag = _decode_stream(stream, self.tag, context=context)[0]
+        tag = self._decode_tag(stream, context=context)
 
-        fmt = (self.fmt_by_tag or {}).get(tag)
+        fmt = self.fmt_by_tag.get(tag)
         if fmt is None:
-            raise ValueError(f"Unknown tag: 0x{int(tag):02x}")
+            if isinstance(tag, int):
+                raise ValueError(f"Unknown tag: 0x{tag:02x}")
+            raise ValueError(f"Unknown tag: {tag!r}")
 
-        inner = stream.read()
-        return _decode_stream(BytesIO(inner), fmt, context=context)[0]
+        struct_cls = self.struct_cls_by_tag[tag]
+        return msgspec.convert(_decode_stream(stream, fmt, context=context)[0], struct_cls)

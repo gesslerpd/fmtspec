@@ -83,7 +83,7 @@ extension_fmt = {
                 EXT_SNI: sni_fmt,
                 EXT_ALPN: alpn_fmt,
             },
-            default=None,  # Unknown extensions return raw bytes
+            default=types.bytes_,  # Unknown extensions return raw bytes
         ),
     ),
 }
