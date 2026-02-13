@@ -304,6 +304,16 @@ def _encode_stream(
         elif fmt_type is dict or isinstance(fmt, Mapping):
             context.push(obj)
 
+            # support MapPrefill protocol for auto-populating sibling fields
+            for prefill_key, prefill_fmt in fmt.items():
+                prefill_fn = getattr(prefill_fmt, "prefill", None)
+                if prefill_fn:
+                    context.push_path(prefill_key)
+                    try:
+                        prefill_fn(context=context)
+                    finally:
+                        context.pop_path()
+
             # preprocess to autodetect Bitfield inlays and build a member->group map
             bitfields = _collect_bitfield_groups(fmt)
             bitfields_remaining = 0

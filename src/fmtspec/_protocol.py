@@ -99,6 +99,21 @@ class Type(Protocol):
     def decode(self, stream: BinaryIO, *, context: Context) -> Any: ...
 
 
+class MapPrefill(Protocol):
+    """Optional hook for types used inside mapping formats.
+
+    Implement this to pre-populate sibling fields on the current parent mapping
+    before ordered mapping encoding begins. This is useful when a type can
+    derive a sibling value from its own field value.
+    """
+
+    def prefill(
+        self,
+        *,
+        context: Context,
+    ) -> None: ...
+
+
 type Format = Type | Mapping[str, Format] | Iterable[Format]
 
 # int: static

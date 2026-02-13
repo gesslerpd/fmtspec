@@ -90,6 +90,34 @@ class TaggedUnion:
     struct_cls_by_tag: dict[Any, type] = field(default_factory=dict)
     struct_tag_field: str | None = None
 
+    # implement MapPrefill protocol to support auto-populating tag field
+    def prefill(
+        self,
+        *,
+        context: Context,
+    ) -> None:
+        if not isinstance(self.tag, Ref):
+            return
+        parent = context.parents[-1]
+        field_key = context.path[-1]
+        if not isinstance(parent, Mapping) or field_key is None:
+            return
+        if self.tag.key in parent:
+            return
+        if field_key not in parent:
+            return
+
+        branch_value = parent[field_key]
+        if not isinstance(branch_value, Mapping) or self.struct_tag_field is None:
+            return
+
+        tag_value = branch_value.get(self.struct_tag_field)
+        if tag_value is None:
+            return
+
+        if hasattr(parent, "__setitem__"):
+            parent[self.tag.key] = tag_value
+
     def __post_init__(self) -> None:
         normalized_fmt_by_tag: dict[Any, Any] = {}
         struct_cls_by_tag: dict[Any, type] = {}
@@ -126,6 +154,7 @@ class TaggedUnion:
     ) -> tuple[Any, bool]:
         if isinstance(self.tag, Ref):
             resolved_tag = self.tag.resolve(context)
+
             value_tag = value.get(self.struct_tag_field, resolved_tag)
             if value_tag != resolved_tag:
                 raise ValueError(f"Tag mismatch: expected {resolved_tag!r}, got {value_tag!r}")
