@@ -197,15 +197,52 @@ def _inspect_leaf(
         context.inspect_children.append(node)
 
 
+NULL_CTX = contextlib.nullcontext()
+
+
 @contextlib.contextmanager
+def _inspect_scope_inner(
+    stream: BinaryIO,
+    context: Context,
+    key,
+    fmt,
+    value,
+    /,
+):
+    parent_children = context.inspect_children
+    children: list[InspectNode] = []
+
+    start_offset = stream.tell()
+    node = InspectNode(
+        key=key,
+        fmt=fmt,
+        data=b"",
+        value=value,
+        offset=start_offset,
+        children=children,
+    )
+
+    context.inspect_children = children
+
+    yield node
+
+    end_offset = stream.tell()
+    data = _get_stream_bytes(stream, start_offset, end_offset)
+    node.data = data
+    node.size = len(data)
+
+    context.inspect_children = parent_children
+    if parent_children is not None:
+        parent_children.append(node)
+
+
 def _inspect_scope(
     stream: BinaryIO,
     context: Context,
     key,
     fmt,
     value,
-    *,
-    track_root: bool = False,
+    /,
 ):
     """Full-featured context manager for InspectNode lifecycle management.
 
@@ -232,43 +269,11 @@ def _inspect_scope(
             if node:
                 node.value = decoded_result
 
-    Usage (top-level with root tracking):
-        with _inspect_scope(stream, context, name, fmt, obj, track_root=True) as node:
-            # encode/decode operations...
-            pass
     """
-    if not context.inspect:
-        yield None
-        return
-
-    parent_children = context.inspect_children
-    children: list[InspectNode] = []
-
-    start_offset = stream.tell()
-    node = InspectNode(
-        key=key,
-        fmt=fmt,
-        data=b"",
-        value=value,
-        offset=start_offset,
-        children=children,
-    )
-
-    # Track root node if requested and not already set
-    if track_root and not context.inspect_node:
-        context.inspect_node = node
-    context.inspect_children = children
-
-    yield node
-
-    end_offset = stream.tell()
-    data = _get_stream_bytes(stream, start_offset, end_offset)
-    node.data = data
-    node.size = len(data)
-
-    context.inspect_children = parent_children
-    if parent_children is not None:
-        parent_children.append(node)
+    # perf: fast no-op when inspection is disabled
+    if context.inspect:
+        return _inspect_scope_inner(stream, context, key, fmt, value)
+    return NULL_CTX
 
 
 # FUTURE: what should this be? use a sentinel object?
@@ -288,7 +293,11 @@ def _encode_stream(
     """Encode object to stream, optionally returning inspection node."""
     context.fmt = fmt
 
-    with _inspect_scope(stream, context, key, fmt, obj, track_root=True) as node:
+    with _inspect_scope(stream, context, key, fmt, obj) as node:
+        if context.inspect and not context.inspect_node:
+            # track root node if not already set
+            context.inspect_node = node
+
         fmt_type = type(fmt)
 
         # type guard for str.encode / bytes.encode (also iterable)
@@ -363,7 +372,11 @@ def _decode_stream(  # noqa: PLR0912
     """Decode object from stream, optionally returning inspection node."""
     context.fmt = fmt
 
-    with _inspect_scope(stream, context, key, fmt, None, track_root=True) as node:
+    with _inspect_scope(stream, context, key, fmt, None) as node:
+        if context.inspect and not context.inspect_node:
+            # track root node if not already set
+            context.inspect_node = node
+
         fmt_type = type(fmt)
 
         # type guard for str.encode / bytes.encode (also iterable)
