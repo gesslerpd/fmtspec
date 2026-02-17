@@ -31,7 +31,7 @@ class InspectNode(Struct, kw_only=True, gc=False):
     value: Any
     offset: int
     size: int = 0
-    children: list[InspectNode] = field(default_factory=list)
+    children: deque[InspectNode] = field(default_factory=deque)
 
     def __post_init__(self):
         if not self.size:
@@ -68,7 +68,7 @@ class Context(Struct, gc=False):
     inspect: bool = False
     inspect_node: InspectNode | None = None
     # FUTURE: is this needed? Can we just use inspect_node.children?
-    inspect_children: list[InspectNode] | None = None
+    inspect_children: deque[InspectNode] = field(default_factory=deque)
 
     def push(self, parent: Any) -> None:
         self.parents.append(parent)

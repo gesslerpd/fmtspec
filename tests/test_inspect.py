@@ -41,7 +41,7 @@ class TestEncodeInspect:
         assert tree.size == 2
         assert tree.data == b"\x01\x02"
         assert tree.value == 0x0102
-        assert tree.children == []
+        assert not tree.children
 
     def test_mapping_format(self):
         """Test inspection of a mapping (dict) format."""
@@ -308,7 +308,7 @@ class TestEncodeInspectStream:
         assert tree.size == 2
         assert tree.data == b"\x01\x02"
         assert tree.value == 0x0102
-        assert tree.children == []
+        assert not tree.children
 
     def test_mapping_format(self):
         """Test stream inspection of a mapping (dict) format."""

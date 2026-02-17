@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from collections import deque
 from collections.abc import Buffer, Iterable, Mapping
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
@@ -181,7 +182,7 @@ def _inspect_leaf(
         start: Stream offset *before* the encode/decode call.
         prepend: If True, insert at position 0 instead of appending.
     """
-    if context.inspect_children is None:
+    if not context.inspect:
         return
     data = _get_stream_bytes(stream, start, stream.tell())
     node = InspectNode(
@@ -192,7 +193,7 @@ def _inspect_leaf(
         offset=start,
     )
     if prepend:
-        context.inspect_children.insert(0, node)
+        context.inspect_children.appendleft(node)
     else:
         context.inspect_children.append(node)
 
@@ -210,7 +211,7 @@ def _inspect_scope_inner(
     /,
 ):
     parent_children = context.inspect_children
-    children: list[InspectNode] = []
+    children: deque[InspectNode] = deque()
 
     start_offset = stream.tell()
     node = InspectNode(
