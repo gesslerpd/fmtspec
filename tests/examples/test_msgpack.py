@@ -23,7 +23,17 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal, Self
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode, encode_inspect, format_tree, types
+from fmtspec import (
+    DecodeError,
+    EncodeError,
+    decode,
+    decode_inspect,
+    encode,
+    encode_inspect,
+    format_tree,
+    types,
+)
+from fmtspec._stream import _inspect_leaf, _inspect_scope
 
 if TYPE_CHECKING:
     from types import EllipsisType
@@ -287,21 +297,24 @@ class MsgPack:
             stream.write(b"\xdc")
             # self._array_by_tag[ARRAY16].encode(value, stream, context=context)
             # don't use fmtspec.types.array here for performance
-            # start = stream.tell()
+            start = stream.tell()
             types.u16.encode(n, stream)
-            # _inspect_leaf(stream, context, "--len--", types.u16, n, start)
+            _inspect_leaf(stream, context, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdd")
             # self._array_by_tag[ARRAY32].encode(value, stream, context=context)
             # don't use fmtspec.types.array here for performance
-            # start = stream.tell()
+            start = stream.tell()
             types.u32.encode(n, stream)
-            # _inspect_leaf(stream, context, "--len--", types.u32, n, start)
+            _inspect_leaf(stream, context, "--len--", types.u32, n, start)
 
-        for item in value:  # i, enumerate(value):
+        for i, item in enumerate(value):
             # context.push_path(i)
-            # with _inspect_scope(stream, context, i, self, item):
-            self.encode(item, stream, context=context)
+            if context.inspect:
+                with _inspect_scope(stream, context, i, self, item):
+                    self.encode(item, stream, context=context)
+            else:
+                self.encode(item, stream, context=context)
             # context.pop_path()
 
     def _encode_map(self, value: dict, stream: BinaryIO, context: Context) -> None:
@@ -312,33 +325,39 @@ class MsgPack:
             stream.write(b"\xde")
             # self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
             # don't use fmtspec.types.array here for performance
-            # start = stream.tell()
+            start = stream.tell()
             types.u16.encode(n, stream)
-            # _inspect_leaf(stream, context, "--len--", types.u16, n, start)
+            _inspect_leaf(stream, context, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdf")
             # self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
             # don't use fmtspec.types.array here for performance
-            # start = stream.tell()
+            start = stream.tell()
             types.u32.encode(n, stream)
-            # _inspect_leaf(stream, context, "--len--", types.u32, n, start)
+            _inspect_leaf(stream, context, "--len--", types.u32, n, start)
 
-        for k, v in value.items():  # i, enumerate(value.items()):
+        # perf: don't use enumerate
+        i = 0
+        for k, v in value.items():
             # context.push_path(i)
-            # with _inspect_scope(stream, context, i, self, (k, v)):
+            if context.inspect:
+                with _inspect_scope(stream, context, i, self, (k, v)):
+                    # context.push_path("key")
+                    with _inspect_scope(stream, context, None, self, k):
+                        # don't need self._keysafe on encode
+                        self.encode(k, stream, context=context)
+                    # context.pop_path()
 
-            # context.push_path("key")
-            # with _inspect_scope(stream, context, "key", self, k):
-            # don't need self._keysafe on encode
-            self.encode(k, stream, context=context)
+                    # context.push_path("value")
+                    with _inspect_scope(stream, context, k, self, v):
+                        self.encode(v, stream, context=context)
+            else:
+                self.encode(k, stream, context=context)
+                self.encode(v, stream, context=context)
             # context.pop_path()
 
-            # context.push_path("value")
-            # with _inspect_scope(stream, context, "value", self, v):
-            self.encode(v, stream, context=context)
             # context.pop_path()
-
-            # context.pop_path()
+            i += 1
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode a MessagePack value from stream."""
@@ -370,31 +389,43 @@ class MsgPack:
         return result
 
     def _decode_array(self, stream: BinaryIO, context: Context, n: int):
-        for _ in range(n):
+        for i in range(n):
             # context.push_path(i)
-            # with _inspect_scope(stream, context, i, self, None) as node:
-            item = self.decode(stream, context=context)
+            if context.inspect:
+                with _inspect_scope(stream, context, i, self, None) as node:
+                    item = self.decode(stream, context=context)
+                    if node:
+                        node.value = item
+            else:
+                item = self.decode(stream, context=context)
             # if node:
             #     node.value = item
             yield item
             # context.pop_path()
 
     def _decode_map(self, stream: BinaryIO, context: Context, n: int):
-        for _ in range(n):
+        for i in range(n):
             # context.push_path(i)
-            # with _inspect_scope(stream, context, i, self, None) as node:
+            if context.inspect:
+                with _inspect_scope(stream, context, i, self, None) as node:
+                    # context.push_path("key")
+                    with _inspect_scope(stream, context, None, self, None) as key_node:
+                        # use self._keysafe on decode
+                        k = self._keysafe.decode(stream, context=context)
+                        if key_node:
+                            key_node.value = k
+                    # context.pop_path()
 
-            # context.push_path("key")
-            # with _inspect_scope(stream, context, "key", self, None) as key_node:
-            # use self._keysafe on decode
-            k = self._keysafe.decode(stream, context=context)
-            # if key_node:
-            #     key_node.value = k
-            # context.pop_path()
-
-            # context.push_path("value")
-            # with _inspect_scope(stream, context, "value", self, None) as value_node:
-            v = self.decode(stream, context=context)
+                    # context.push_path("value")
+                    with _inspect_scope(stream, context, k, self, None) as value_node:
+                        v = self.decode(stream, context=context)
+                        if value_node:
+                            value_node.value = v
+                    if node:
+                        node.value = k, v
+            else:
+                k = self._keysafe.decode(stream, context=context)
+                v = self.decode(stream, context=context)
             # if value_node:
             #     value_node.value = v
             # context.pop_path()
@@ -423,15 +454,15 @@ class MsgPack:
             result = _STR_BY_TAG[tag].decode(stream, context=context)
         elif ARRAY16 <= tag <= ARRAY32:
             length_fmt = types.u16 if tag == ARRAY16 else types.u32
-            # start = stream.tell()
+            start = stream.tell()
             length = length_fmt.decode(stream)
-            # _inspect_leaf(stream, context, "--len--", length_fmt, length, start)
+            _inspect_leaf(stream, context, "--len--", length_fmt, length, start)
             result = self.array_type(self._decode_array(stream, context, length))
         elif MAP16 <= tag <= MAP32:
             length_fmt = types.u16 if tag == MAP16 else types.u32
-            # start = stream.tell()
+            start = stream.tell()
             length = length_fmt.decode(stream)
-            # _inspect_leaf(stream, context, "--len--", length_fmt, length, start)
+            _inspect_leaf(stream, context, "--len--", length_fmt, length, start)
             result = self.map_type(self._decode_map(stream, context, length))
         else:
             raise ValueError(f"Unknown msgpack tag: 0x{tag:02x}")
@@ -1045,9 +1076,17 @@ class TestMsgPackComplex:
 
         data_inspect, tree = encode_inspect(value, msgpack)
         assert data == data_inspect
+
+        enc_tree = format_tree(tree)
+
+        _, tree = decode_inspect(data, msgpack)
+        dec_tree = format_tree(tree)
+
+        assert enc_tree == dec_tree
         # assert tree.children
         print()
-        print(format_tree(tree))
+        print(enc_tree)
+        print(dec_tree)
         print()
         assert result == value
 

@@ -56,7 +56,14 @@ def main() -> None:
     elem_fmt = types.u32le
     arr_fmt = types.Array(elem_fmt, (rows, cols))
 
-    value = make_array(0, (rows, cols))
+    float_fmt = types.f32be
+    float_arr_fmt = types.Array(float_fmt, (rows, cols))
+
+    complex_fmt = types.Sized(types.u32le, types.bytes_)
+    complex_arr_fmt = types.Array(complex_fmt, (rows, cols // 2))
+
+    value = make_array(4, (rows, cols))
+    complex_value = make_array(b"\x00\x00\x00\x00", (rows, cols // 2))
 
     # warmup / produce blob for decode bench
     blob = encode(value, fmt=arr_fmt)
@@ -73,8 +80,28 @@ def main() -> None:
     enc_time = time_fn(lambda: encode(value, fmt=arr_fmt), iterations=iters)
     dec_time = time_fn(lambda: decode(blob, fmt=arr_fmt), iterations=iters)
 
+    enc_float_time = time_fn(lambda: encode(value, fmt=float_arr_fmt), iterations=iters)
+    dec_float_time = time_fn(lambda: decode(blob, fmt=float_arr_fmt), iterations=iters)
+
+    enc_complex_time = time_fn(lambda: encode(complex_value, fmt=complex_arr_fmt), iterations=iters)
+    dec_complex_time = time_fn(lambda: decode(blob, fmt=complex_arr_fmt), iterations=iters)
+
     print(f"array encode: {iters / enc_time:,.0f} ops/sec — {enc_time / iters * 1e6:,.1f} µs/op")
     print(f"array decode: {iters / dec_time:,.0f} ops/sec — {dec_time / iters * 1e6:,.1f} µs/op")
+
+    print(
+        f"array float encode: {iters / enc_float_time:,.0f} ops/sec — {enc_float_time / iters * 1e6:,.1f} µs/op"
+    )
+    print(
+        f"array float decode: {iters / dec_float_time:,.0f} ops/sec — {dec_float_time / iters * 1e6:,.1f} µs/op"
+    )
+
+    print(
+        f"array complex encode: {iters / enc_complex_time:,.0f} ops/sec — {enc_complex_time / iters * 1e6:,.1f} µs/op"
+    )
+    print(
+        f"array complex decode: {iters / dec_complex_time:,.0f} ops/sec — {dec_complex_time / iters * 1e6:,.1f} µs/op"
+    )
 
     # compare from a tempfile (read-from-disk each iteration)
     with open(temp_path, "wb") as f:
