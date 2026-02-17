@@ -121,7 +121,6 @@ def _validate_value_shape(value: Any, dims: tuple[int, ...], level: int = 0) -> 
         _validate_value_shape(item, dims, level + 1)
 
 
-# FUTURE: simple array helper, need a format `class Array: ...` later
 @dataclass(frozen=True, slots=True)
 class Array:
     """Fixed-shape array type.
@@ -143,7 +142,9 @@ class Array:
     _fast_typecode: str | None = field(init=False, repr=False, compare=False)
     _fast_expected_count: int | None = field(init=False, repr=False, compare=False)
     _fast_byteorder_mismatch: bool = field(init=False, repr=False, compare=False)
-    _fast_elem_size: int | None = field(init=False, repr=False, compare=False)
+    _fast_elem_size: int = field(init=False, repr=False, compare=False)
+    # FUTURE: perf?
+    # _fast_prefix_dim: Type | None = field(init=False, repr=False, compare=False)
 
     # post-init private
 
@@ -192,8 +193,12 @@ class Array:
         # length value itself.
         fast_typecode: str | None = None
         fast_expected: int | None = None
-        fast_bomismatch = False
-        fast_elem_size: int | None = None
+        fast_byteorder_mismatch = False
+        fast_elem_size: int = (
+            1  # use 1 as default because it triggers no-op and is safe to divide by
+        )
+        # FUTURE: perf?
+        # fast_prefix_dim: Type | None = None
 
         # TODO: quickly flatten all multi-dimensional arrays encode regardless of element type?
         # and then also unflatten on decode? May increase the performance for all element types.
@@ -209,23 +214,28 @@ class Array:
             else:
                 # Float: map sizes to array typecodes
                 fast_typecode = FLOAT_TYPECODE_MAP.get(fast_elem_size)
-            # Only enable the stdlib-array fast-path when all dims are
-            # either static ints or `Ref`s (no `Type`/prefix dims). Compute
-            # a concrete expected flattened count when all dims are ints.
-            if fast_typecode is not None and self.dims:
-                # disable fast-path if any dim is a non-int/non-Ref (i.e., a Type)
-                if any(not (isinstance(d, int) or isinstance(d, Ref)) for d in self.dims):
-                    fast_typecode = None
-                else:
-                    # compute static expected product if all dims are ints
-                    fast_expected, _ = _resolve_dims_product(self.dims, None)
 
-            fast_bomismatch = elem.byteorder != sys.byteorder
+            if fast_typecode is not None and self.dims:
+                if all(isinstance(d, (int, Ref)) for d in self.dims):
+                    # compute static expected product if all dims are int/resolvable-Ref
+                    fast_expected, _ = _resolve_dims_product(self.dims, None)
+                else:
+                    # disable fast-path if any dim is a non-int/non-Ref (i.e. Type)
+                    # FUTURE: perf?
+                    # support 1-D length-prefixed arrays (common in wire formats)
+                    # if len(self.dims) == 1:
+                    #     fast_prefix_dim = self.dims[0]
+                    # else:
+                    fast_typecode = None
+
+            fast_byteorder_mismatch = elem.byteorder != sys.byteorder
 
         object.__setattr__(self, "_fast_typecode", fast_typecode)
         object.__setattr__(self, "_fast_expected_count", fast_expected)
-        object.__setattr__(self, "_fast_byteorder_mismatch", fast_bomismatch)
+        object.__setattr__(self, "_fast_byteorder_mismatch", fast_byteorder_mismatch)
         object.__setattr__(self, "_fast_elem_size", fast_elem_size)
+        # FUTURE: perf?
+        # object.__setattr__(self, "_fast_prefix_dim", fast_prefix_dim)
 
     def _encode_level(self, stream, v: list[Any], idx: int, context: Context) -> None:
         dims = self.dims
@@ -264,6 +274,17 @@ class Array:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
         # Skip fast-path when inspecting to capture individual element nodes
         if (typecode := getattr(self, "_fast_typecode", None)) and not context.inspect:
+            # FUTURE: perf?
+            # prefix_dim = self._fast_prefix_dim
+            # if prefix_dim is not None:
+            #     count = len(value)
+            #     prefix_dim.encode(count, stream, context=context)
+            #     arr = _parray(typecode, value)
+            #     if self._fast_byteorder_mismatch and self._fast_elem_size > 1:
+            #         arr.byteswap()
+            #     arr.tofile(stream)
+            #     return
+
             expected = self._fast_expected_count
 
             if self.dims:
@@ -277,9 +298,8 @@ class Array:
                 _validate_value_shape(value, resolved_dims)
 
             # For multi-dimensional arrays, flatten before writing.
-            data_vals = [v for v in flatten(value)]
-            arr = _parray(typecode, data_vals)
-            if self._fast_byteorder_mismatch and (self._fast_elem_size or 0) > 1:
+            arr = _parray(typecode, flatten(value))
+            if self._fast_byteorder_mismatch and self._fast_elem_size > 1:
                 arr.byteswap()
             arr.tofile(stream)
             return
@@ -332,6 +352,16 @@ class Array:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
         # Skip fast-path when inspecting to capture individual element nodes
         if (typecode := getattr(self, "_fast_typecode", None)) and not context.inspect:
+            # FUTURE: perf?
+            # prefix_dim = self._fast_prefix_dim
+            # if prefix_dim is not None:
+            #     count = prefix_dim.decode(stream, context=context)
+            #     arr = _parray(typecode)
+            #     arr.fromfile(stream, count)
+            #     if self._fast_byteorder_mismatch and self._fast_elem_size > 1:
+            #         arr.byteswap()
+            #     return arr.tolist()
+
             count = self._fast_expected_count
             # resolve Ref-based count at runtime if necessary
             if count is None and self.dims:
@@ -347,12 +377,12 @@ class Array:
                     end = stream.seek(0, io.SEEK_END)
                     stream.seek(cur)
                     remaining = end - cur
-                count = remaining // (self._fast_elem_size or 1)
+                count = remaining // self._fast_elem_size
 
             arr = _parray(typecode)
             arr.fromfile(stream, count)
             # arr.frombytes(data)
-            if self._fast_byteorder_mismatch and (self._fast_elem_size or 0) > 1:
+            if self._fast_byteorder_mismatch and self._fast_elem_size > 1:
                 arr.byteswap()
             lst = arr.tolist()
             # If this is a multi-dimensional fixed-shape array, rebuild

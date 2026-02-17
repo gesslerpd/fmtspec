@@ -199,12 +199,12 @@ class MsgPack:
 
     _float_type: types.Float = field(init=False, repr=False, compare=False)
     _float_tag: int = field(init=False, repr=False, compare=False)
-    _map_by_tag: dict[int, types.Array] = field(
-        init=False, repr=False, compare=False, default_factory=dict
-    )
-    _array_by_tag: dict[int, types.Array] = field(
-        init=False, repr=False, compare=False, default_factory=dict
-    )
+    # _map_by_tag: dict[int, types.Array] = field(
+    #     init=False, repr=False, compare=False, default_factory=dict
+    # )
+    # _array_by_tag: dict[int, types.Array] = field(
+    #     init=False, repr=False, compare=False, default_factory=dict
+    # )
     _keysafe: Self = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -229,11 +229,11 @@ class MsgPack:
             _FLOAT_BY_TAG[self._float_tag],
         )
         # defer these so they can reference `self`
-        self._map_by_tag[MAP16] = types.array((self._keysafe, self), dims=types.u16)
-        self._map_by_tag[MAP32] = types.array((self._keysafe, self), dims=types.u32)
+        # self._map_by_tag[MAP16] = types.array((self._keysafe, self), dims=types.u16)
+        # self._map_by_tag[MAP32] = types.array((self._keysafe, self), dims=types.u32)
 
-        self._array_by_tag[ARRAY16] = types.array(self, dims=types.u16)
-        self._array_by_tag[ARRAY32] = types.array(self, dims=types.u32)
+        # self._array_by_tag[ARRAY16] = types.array(self, dims=types.u16)
+        # self._array_by_tag[ARRAY32] = types.array(self, dims=types.u32)
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
         """Encode a Python value to MessagePack format."""
@@ -283,32 +283,39 @@ class MsgPack:
         if n <= 15:
             # fixarray
             stream.write(BYTES[0x90 | n])
-            # don't use fmtspec.types.array for performance
-            for item in value:
-                self.encode(item, stream, context=context)
         elif n <= 0xFFFF:
             stream.write(b"\xdc")
-            # FUTURE: don't use fmtspec.types.array here for performance?
-            self._array_by_tag[ARRAY16].encode(value, stream, context=context)
+            # self._array_by_tag[ARRAY16].encode(value, stream, context=context)
+            # don't use fmtspec.types.array here for performance
+            types.u16.encode(n, stream)
         else:
             stream.write(b"\xdd")
-            # FUTURE: don't use fmtspec.types.array here for performance?
-            self._array_by_tag[ARRAY32].encode(value, stream, context=context)
+            # self._array_by_tag[ARRAY32].encode(value, stream, context=context)
+            # don't use fmtspec.types.array here for performance
+            types.u32.encode(n, stream)
+
+        for item in value:
+            self.encode(item, stream, context=context)
 
     def _encode_map(self, value: dict, stream: BinaryIO, context: Context) -> None:
         n = len(value)
         if n <= 15:
             stream.write(BYTES[0x80 | n])
-            # don't use fmtspec.types.array for performance
-            for k, v in value.items():
-                self.encode(k, stream, context=context)
-                self.encode(v, stream, context=context)
         elif n <= 0xFFFF:
             stream.write(b"\xde")
-            self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
+            # self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
+            # don't use fmtspec.types.array here for performance
+            types.u16.encode(n, stream)
         else:
             stream.write(b"\xdf")
-            self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
+            # self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
+            # don't use fmtspec.types.array here for performance
+            types.u32.encode(n, stream)
+
+        for k, v in value.items():
+            # don't need self._keysafe on encode
+            self.encode(k, stream, context=context)
+            self.encode(v, stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode a MessagePack value from stream."""
@@ -362,13 +369,26 @@ class MsgPack:
         elif STR8 <= tag <= STR32:
             result = _STR_BY_TAG[tag].decode(stream, context=context)
         elif ARRAY16 <= tag <= ARRAY32:
-            result = self.array_type(self._array_by_tag[tag].decode(stream, context=context))
-            # FUTURE: don't use fmtspec.types.array here for performance?
+            # result = self.array_type(self._array_by_tag[tag].decode(stream, context=context))
+            # don't use fmtspec.types.array here for performance
+            length_type = types.u16 if tag == ARRAY16 else types.u32
+            length = length_type.decode(stream)
+            result = self.array_type(self.decode(stream, context=context) for _ in range(length))
         elif MAP16 <= tag <= MAP32:
+            # result = self.map_type(
+            #     tuple(kv_pair) for kv_pair in self._map_by_tag[tag].decode(stream, context=context)
+            # )
+            # don't use fmtspec.types.array here for performance
+            length_type = types.u16 if tag == MAP16 else types.u32
+            length = length_type.decode(stream)
             result = self.map_type(
-                tuple(kv_pair) for kv_pair in self._map_by_tag[tag].decode(stream, context=context)
+                (
+                    # use self._keysafe on decode
+                    self._keysafe.decode(stream, context=context),
+                    self.decode(stream, context=context),
+                )
+                for _ in range(length)
             )
-            # FUTURE: don't use fmtspec.types.array here for performance?
         else:
             raise ValueError(f"Unknown msgpack tag: 0x{tag:02x}")
 
