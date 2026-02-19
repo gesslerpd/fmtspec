@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, ClassVar
 
+from .._stream import read_exactly, write_all
+
 
 @dataclass(frozen=True, slots=True)
 class Literal:
@@ -34,13 +36,13 @@ class Literal:
         """Write the literal bytes to stream. Value is ignored."""
         if self.strict and value is not None and value != self.value:
             raise ValueError(f"Expected {self.value!r}, got {value!r}")
-        stream.write(self.value)
+        write_all(stream, self.value)
 
     def decode(self, stream: BinaryIO, **_: Any) -> bytes:
         """Read and verify the literal bytes from stream."""
-        data = stream.read(len(self.value))
+        data = read_exactly(stream, len(self.value))
         if self.strict and data != self.value:
-            raise ValueError(f"Expected {self.value!r}, got {data!r}")
+            raise ValueError(f"Expected {self.value!r}, got {bytes(data)!r}")
         return self.value
 
 
@@ -54,7 +56,7 @@ class Null:
         assert value is None
 
     def decode(self, stream: BinaryIO, **_: Any) -> None:
-        pass
+        return None
 
 
 null = Null()

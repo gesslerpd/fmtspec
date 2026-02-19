@@ -3,6 +3,8 @@ from enum import IntEnum, IntFlag
 from struct import Struct
 from typing import Any, BinaryIO, Literal
 
+from .._stream import read_exactly, write_all
+
 SIZE_MAP = {
     1: "B",
     2: "H",
@@ -53,12 +55,10 @@ class Int:
         # FUTURE: validate enum membership? or warn about it? strict mode?
         # if self.enum and value not in self.enum:
         #     value = self.enum(value)
-        stream.write(self._struct.pack(value))
+        write_all(stream, self._struct.pack(value))
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
-        raw = stream.read(self.size)
-        if len(raw) < self.size:
-            raise ValueError(f"Expected {self.size} bytes, got {len(raw)}")
+        raw = read_exactly(stream, self.size)
         # FUTURE: use the unpack_from method for efficiency?
         value = self._struct.unpack(raw)[0]
         if self.enum and value in self.enum:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import io
 from collections import deque
 from collections.abc import Buffer, Iterable, Mapping
-from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 from ._protocol import Context, Format, InspectNode
+
+# keep this file stdlib/protocol-only to avoid circular imports
 
 if TYPE_CHECKING:
     from .types import Bitfields
@@ -22,6 +24,73 @@ class StreamWrapper(Protocol):
         ...
 
 
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def peek(stream: BinaryIO, size: int, /) -> bytearray:
+    """Peek exactly ``size`` bytes from ``stream`` without advancing the position."""
+    data = read_exactly(stream, size)
+    stream.seek(-size, io.SEEK_CUR)
+    return data
+
+
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def read_exactly(stream: BinaryIO, size: int, /) -> bytearray:
+    """Read exactly ``size`` bytes from ``stream`` or raise ``EOFError``."""
+    # perf: hot path for BytesIO uses direct buffer slicing
+    if type(stream) is io.BytesIO:
+        start = stream.tell()
+        end = start + size
+        buf = stream.getbuffer()
+        try:
+            if end > len(buf):
+                raise EOFError(f"Expected {size} bytes, got {len(buf) - start}")
+            stream.seek(size, io.SEEK_CUR)
+            out = bytearray(buf[start:end])
+        finally:
+            buf.release()
+        return out
+
+    # perf: pre-allocate and fill via readinto to avoid per-chunk allocations
+    out = bytearray(size)
+    mv = memoryview(out)
+    try:
+        n = 0
+        readinto = getattr(stream, "readinto", None)
+        if readinto is not None:
+            while n < size:
+                got = readinto(mv[n:])
+                if not got:
+                    raise EOFError(f"Expected {size} bytes, got {n}")
+                n += got
+        else:
+            read = stream.read
+            while n < size:
+                chunk = read(size - n)
+                if not chunk:
+                    raise EOFError(f"Expected {size} bytes, got {n}")
+                chunk_size = len(chunk)
+                n_next = n + chunk_size
+                mv[n:n_next] = chunk
+                n = n_next
+    finally:
+        mv.release()
+    return out
+
+
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def write_all(stream: BinaryIO, data: Buffer, /) -> None:
+    """Write all bytes from ``data`` to ``stream`` or raise ``EOFError``."""
+    total = len(data)
+    write = stream.write
+    n = write(data)
+    if n < total:
+        # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
+        mv = memoryview(data)
+        while n < total:
+            written = write(mv[n:])
+            n += written
+        mv.release()  # not required but explicitly release memoryview
+
+
 class BufferingStream:
     """Wrapper stream that buffers read bytes for inspection.
 
@@ -32,6 +101,11 @@ class BufferingStream:
     def __init__(self, stream: BinaryIO) -> None:
         self._stream = stream
         self._buffer = bytearray()
+        # Track the initial position of the underlying stream
+        try:
+            self._start_offset = stream.tell()
+        except (AttributeError, OSError):
+            self._start_offset = 0
 
     def read(self, size: int = -1) -> bytes:
         """Read bytes and append to buffer."""
@@ -41,7 +115,11 @@ class BufferingStream:
 
     def tell(self) -> int:
         """Return the current position relative to start."""
-        return len(self._buffer)
+        return self._start_offset + len(self._buffer)
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        """Seek the underlying stream when supported."""
+        return self._stream.seek(offset, whence)
 
     def get_bytes(self, start: int, end: int) -> bytes:
         """Extract bytes from buffer at the given offsets."""
@@ -152,7 +230,7 @@ def _get_stream_bytes(stream: BinaryIO, start: int, end: int) -> bytes:
     get_bytes = getattr(stream, "get_bytes", None)
     if get_bytes:
         return get_bytes(start, end)
-    if type(stream) is BytesIO:
+    if type(stream) is io.BytesIO:
         return bytes(stream.getbuffer()[start:end])  # type: ignore
     raise TypeError(f"Cannot extract bytes from {type(stream)}")
 

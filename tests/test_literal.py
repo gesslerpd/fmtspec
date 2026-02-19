@@ -59,7 +59,7 @@ def test_in_format_dict() -> None:
         "version": types.u16,
     }
 
-    data = encode({"magic": None, "version": 1}, fmt)
+    data = encode({"version": 1}, fmt)
     assert data == b"\x89PNG\x00\x01"
 
     result = decode(b"\x89PNG\x00\x01", fmt)

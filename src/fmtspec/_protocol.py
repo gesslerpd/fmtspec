@@ -9,6 +9,8 @@ from typing import Any, BinaryIO, Protocol
 
 from msgspec import Struct, field
 
+# keep this file stdlib-only to avoid circular imports
+
 
 # FUTURE: remove gc=False optimization, higher risk for this
 # FUTURE: remove kw_only=True for performance?

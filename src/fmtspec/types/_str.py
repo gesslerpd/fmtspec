@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, BinaryIO
 
+from .._stream import read_exactly, write_all
+
 
 @dataclass(frozen=True, slots=True)
 class Str:
@@ -11,11 +13,15 @@ class Str:
         data = value.encode(self.encoding)
         if self.size is not None and len(data) != self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(data)}")
-        stream.write(data)
+        write_all(stream, data)
 
     def decode(self, stream: BinaryIO, **_: Any) -> str:
-        # read fixed size or until EOS
-        return stream.read(-1 if self.size is None else self.size).decode(self.encoding)
+        if self.size is None:
+            # read until EOS
+            data = stream.read()
+        else:
+            data = read_exactly(stream, self.size)
+        return data.decode(self.encoding)
 
 
 str_ = str_utf8 = Str()

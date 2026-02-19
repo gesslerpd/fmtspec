@@ -4,6 +4,7 @@ from types import EllipsisType
 from typing import Any, BinaryIO, ClassVar
 
 from .._protocol import Type
+from .._stream import write_all
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,29 +21,34 @@ class TakeUntil:
     terminator: bytes
     max_size: int | None = None
 
+    def __post_init__(self) -> None:
+        if not self.terminator:
+            raise ValueError("terminator must not be empty")
+
     def encode(self, value: bytes, stream: BinaryIO, **_: Any) -> None:
-        # terminator mode
         self.fmt.encode(value, stream, **_)
-        stream.write(self.terminator)
+        write_all(stream, self.terminator)
 
     def decode(self, stream: BinaryIO, **_: Any) -> str | bytes:
-        # terminator mode
-        term = self.terminator  # type: ignore[assignment]
+        term = self.terminator
         term_len = len(term)
+        max_size = float("inf") if self.max_size is None else self.max_size
+        read = stream.read
 
         # search for terminator
-        buffer = bytearray()
+        buffer = bytearray(read(term_len))
+        append = buffer.append
+        size = 0
         while True:
-            chunk = stream.read(1)
+            if buffer[-term_len:] == term:
+                return self.fmt.decode(BytesIO(buffer[:-term_len]), **_)
+
+            chunk = read(1)
             if not chunk:
                 raise EOFError("Unexpected end of stream while searching for terminator")
-            buffer.extend(chunk)
+            # perf: avoid buffer.extend() for single byte
+            append(chunk[0])
+            size += 1
 
-            if len(buffer) >= term_len:
-                with memoryview(buffer) as view:
-                    if view[-term_len:] == term:
-                        # found terminator
-                        return self.fmt.decode(BytesIO(view[:-term_len]), **_)
-
-            if self.max_size is not None and len(buffer) > self.max_size:
+            if size > max_size:
                 raise ValueError("Terminator not found within max_size limit")
