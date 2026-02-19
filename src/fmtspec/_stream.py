@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import contextlib
-import io
 from collections import deque
 from collections.abc import Buffer, Iterable, Mapping
+from io import SEEK_CUR, BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 from ._protocol import Context, Format, InspectNode
@@ -25,29 +25,23 @@ class StreamWrapper(Protocol):
 
 
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def peek(stream: BinaryIO, size: int, /) -> bytearray:
+def peek(stream: BinaryIO, size: int, /) -> bytes:
     """Peek exactly ``size`` bytes from ``stream`` without advancing the position."""
     data = read_exactly(stream, size)
-    stream.seek(-size, io.SEEK_CUR)
+    stream.seek(-size, SEEK_CUR)
     return data
 
 
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def read_exactly(stream: BinaryIO, size: int, /) -> bytearray:
+def read_exactly(stream: BinaryIO, size: int, /) -> bytes:
     """Read exactly ``size`` bytes from ``stream`` or raise ``EOFError``."""
-    # perf: hot path for BytesIO uses direct buffer slicing
-    if type(stream) is io.BytesIO:
-        start = stream.tell()
-        end = start + size
-        buf = stream.getbuffer()
-        try:
-            if end > len(buf):
-                raise EOFError(f"Expected {size} bytes, got {len(buf) - start}")
-            stream.seek(size, io.SEEK_CUR)
-            out = bytearray(buf[start:end])
-        finally:
-            buf.release()
-        return out
+    # perf: fast path for BytesIO
+    if type(stream) is BytesIO:
+        data = stream.read(size)
+        data_size = len(data)
+        if data_size != size:
+            raise EOFError(f"Expected {size} bytes, got {data_size}")
+        return data
 
     # perf: pre-allocate and fill via readinto to avoid per-chunk allocations
     out = bytearray(size)
@@ -79,6 +73,10 @@ def read_exactly(stream: BinaryIO, size: int, /) -> bytearray:
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
 def write_all(stream: BinaryIO, data: Buffer, /) -> None:
     """Write all bytes from ``data`` to ``stream`` or raise ``EOFError``."""
+    # perf: fast path for BytesIO
+    if type(stream) is BytesIO:
+        stream.write(data)
+        return
     total = len(data)
     write = stream.write
     n = write(data)
@@ -230,7 +228,7 @@ def _get_stream_bytes(stream: BinaryIO, start: int, end: int) -> bytes:
     get_bytes = getattr(stream, "get_bytes", None)
     if get_bytes:
         return get_bytes(start, end)
-    if type(stream) is io.BytesIO:
+    if type(stream) is BytesIO:
         return bytes(stream.getbuffer()[start:end])  # type: ignore
     raise TypeError(f"Cannot extract bytes from {type(stream)}")
 

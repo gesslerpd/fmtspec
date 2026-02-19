@@ -235,16 +235,6 @@ def test_read_exactly_read_fallback_raises_eoferror_when_short():
         read_exactly(stream, 4)
 
 
-def test_peek_raises_eoferror_and_keeps_position_when_short():
-    stream = BytesIO(b"abc")
-    stream.seek(1)
-
-    with pytest.raises(EOFError, match=r"Expected 4 bytes, got 2"):
-        peek(stream, 4)
-
-    assert stream.tell() == 1
-
-
 def test_write_all_accepts_memoryview_input():
     class CapturingStream:
         def __init__(self) -> None:

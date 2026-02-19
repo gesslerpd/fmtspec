@@ -24,7 +24,7 @@ class Bytes:
     def decode(self, stream: BinaryIO, **_: Any) -> bytes:
         if self.size is None:
             return stream.read()
-        return bytes(read_exactly(stream, self.size))
+        return read_exactly(stream, self.size)
 
 
 bytes_ = Bytes()
