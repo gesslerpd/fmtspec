@@ -1,10 +1,9 @@
 from dataclasses import dataclass
-from io import BytesIO
 from types import EllipsisType
 from typing import Any, BinaryIO, ClassVar
 
 from .._protocol import Type
-from .._stream import write_all
+from .._stream import ProtoBytesIO as BytesIO
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +26,7 @@ class TakeUntil:
 
     def encode(self, value: bytes, stream: BinaryIO, **_: Any) -> None:
         self.fmt.encode(value, stream, **_)
-        write_all(stream, self.terminator)
+        stream.write_all(self.terminator)
 
     def decode(self, stream: BinaryIO, **_: Any) -> str | bytes:
         term = self.terminator
