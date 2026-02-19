@@ -122,7 +122,6 @@ def test_encode_simple() -> None:
     assert data == b"\x00\x05hello"
 
 
-@pytest.mark.skip
 @pytest.mark.xfail(strict=True, raises=EncodeError)
 def test_encode_autopopulate() -> None:
     # FUTURE: support auto-populating length keys during encode?

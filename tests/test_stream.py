@@ -1,3 +1,5 @@
+import socket
+import threading
 from io import BytesIO
 from pathlib import Path
 
@@ -81,6 +83,41 @@ def test_file_roundtrip(tmp_path: Path):
         result = decode_stream(f, fmt)
 
     assert result == obj
+
+
+def test_socket_roundtrip_with_encode_decode_stream():
+    fmt = {
+        "key": types.TakeUntil(types.str_, b"\0"),
+        "number": types.Int(byteorder="little", signed=False, size=4),
+    }
+    result = {}
+
+    def sender(sock, n) -> None:
+        with sock:
+            with sock.makefile("wb") as stream:
+                for i in range(n):
+                    obj = {"key": f"value_{i}", "number": i}
+                    encode_stream(obj, stream, fmt)
+                    stream.flush()
+
+    def receiver(sock, n) -> None:
+        with sock:
+            with sock.makefile("rb") as recv_stream:
+                for _ in range(n):
+                    result.update(decode_stream(recv_stream, fmt))
+
+    n = 10000
+    sock_send, sock_recv = socket.socketpair()
+
+    send_thread = threading.Thread(target=sender, args=(sock_send, n))
+    recv_thread = threading.Thread(target=receiver, args=(sock_recv, n))
+
+    send_thread.start()
+    recv_thread.start()
+    send_thread.join()
+    recv_thread.join()
+
+    assert result == {"key": f"value_{n - 1}", "number": n - 1}
 
 
 def test_read_exactly_bytesio_success():
