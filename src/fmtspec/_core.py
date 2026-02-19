@@ -47,7 +47,7 @@ BUILTIN_TYPES = (
 
 # Types that should be completely preserved (not converted to dicts by msgspec)
 # These are types with custom encode methods that handle their own serialization
-PRESERVED_TYPES: list[type] = []
+PRESERVED_TYPES: set[type] = set()
 
 
 def register_builtin_type(cls: type) -> None:
@@ -60,13 +60,18 @@ def register_builtin_type(cls: type) -> None:
     during encoding but should be handled by their own encode methods.
     """
     if cls not in PRESERVED_TYPES:
-        PRESERVED_TYPES.append(cls)
+        PRESERVED_TYPES.add(cls)
 
 
 INT_CONVERTIBLE_TYPES = (
     ipaddress.IPv4Address,
     ipaddress.IPv6Address,
 )
+
+_INIT_SUPPORTED_PARAM_KINDS = {
+    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    inspect.Parameter.KEYWORD_ONLY,
+}
 
 
 def _fix_inspect_offsets(children: list[InspectNode], parent_offset: int) -> None:
@@ -107,12 +112,7 @@ def _create_new_instance[T](cls: type[T], data: dict[str, Any]) -> T:
     init_param_names = [
         name
         for name, param in sig.parameters.items()
-        if name != "self"
-        and param.kind
-        in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        )
+        if name != "self" and param.kind in _INIT_SUPPORTED_PARAM_KINDS
     ]
     init_kwargs: dict[str, Any] = {}
     for name in init_param_names:

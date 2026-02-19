@@ -293,6 +293,11 @@ LOGICAL_FORMAT_SIZE_MAP = {
     4: LogicalFormat.format_32bit,
 }
 
+_LOGICAL_PAD_FORMATS = {
+    LogicalFormat.format_16bit,
+    LogicalFormat.format_32bit,
+}
+
 
 class TypeLogicalSegment:
     @classmethod
@@ -328,7 +333,7 @@ class TypeLogicalSegment:
         )
 
         # Pad byte for 16/32-bit formats (always required per CIP spec for word alignment)
-        if fmt in (LogicalFormat.format_16bit, LogicalFormat.format_32bit):
+        if fmt in _LOGICAL_PAD_FORMATS:
             stream.write(b"\x00")
 
         stream.write(value_bytes)
