@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 from collections import deque
 from collections.abc import Buffer, Iterable, Mapping
-from io import BytesIO
+from io import SEEK_CUR, BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
 
 from ._protocol import Context, Format, InspectNode
@@ -24,79 +24,69 @@ class StreamWrapper(Protocol):
         ...
 
 
-class ReadStream:
-    __slots__ = (
-        "_read",
-        "_readinto",
-    )
-
-    def __init__(self, stream: BinaryIO) -> None:
-        self._read = stream.read
-        self._readinto = getattr(stream, "readinto", None)
-
-    # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-    def read_exactly(self, size: int, /) -> bytes:
-        # perf: pre-allocate and fill via readinto to avoid per-chunk allocations
-        out = bytearray(size)
-        mv = memoryview(out)
-        try:
-            n = 0
-            readinto = self._readinto
-            if readinto is None:
-                read = self._read
-                while n < size:
-                    chunk = read(size - n)
-                    if not chunk:
-                        raise EOFError(f"Expected {size} bytes, got {n}")
-                    chunk_size = len(chunk)
-                    n_next = n + chunk_size
-                    mv[n:n_next] = chunk
-                    n = n_next
-            else:
-                while n < size:
-                    got = readinto(mv[n:])
-                    if not got:
-                        raise EOFError(f"Expected {size} bytes, got {n}")
-                    n += got
-        finally:
-            mv.release()
-        return out
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def peek(stream: BinaryIO, size: int, /) -> bytes:
+    """Peek exactly ``size`` bytes from ``stream`` without advancing the position."""
+    data = read_exactly(stream, size)
+    stream.seek(-size, SEEK_CUR)
+    return data
 
 
-class WriteStream:
-    __slots__ = ("_write",)
-
-    def __init__(self, stream: BinaryIO) -> None:
-        self._write = stream.write
-
-    # perf: force positional-only to avoid unnecessary kwargs parsing
-    def write_all(self, data: Buffer, /) -> None:
-        total = len(data)
-        write = self._write
-        n = write(data)
-        if n < total:
-            # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
-            mv = memoryview(data)
-            while n < total:
-                written = write(mv[n:])
-                n += written
-            mv.release()
-
-
-class ProtoBytesIO(BytesIO):
-    """Fastpath stream protocol BytesIO wrapper."""
-
-    # perf: force positional-only to avoid unnecessary kwargs parsing
-    def read_exactly(self, size: int, /) -> bytes:
-        data = self.read(size)
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def read_exactly(stream: BinaryIO, size: int, /) -> bytes:
+    """Read exactly ``size`` bytes from ``stream`` or raise ``EOFError``."""
+    # perf: fast path for BytesIO
+    if type(stream) is BytesIO:
+        data = stream.read(size)
         data_size = len(data)
         if data_size != size:
             raise EOFError(f"Expected {size} bytes, got {data_size}")
         return data
 
-    # perf: force positional-only to avoid unnecessary kwargs parsing
-    def write_all(self, data: Buffer, /) -> None:
-        self.write(data)
+    # perf: pre-allocate and fill via readinto to avoid per-chunk allocations
+    out = bytearray(size)
+    mv = memoryview(out)
+    try:
+        n = 0
+        readinto = getattr(stream, "readinto", None)
+        if readinto is not None:
+            while n < size:
+                got = readinto(mv[n:])
+                if not got:
+                    raise EOFError(f"Expected {size} bytes, got {n}")
+                n += got
+        else:
+            read = stream.read
+            while n < size:
+                chunk = read(size - n)
+                if not chunk:
+                    raise EOFError(f"Expected {size} bytes, got {n}")
+                chunk_size = len(chunk)
+                n_next = n + chunk_size
+                mv[n:n_next] = chunk
+                n = n_next
+    finally:
+        mv.release()
+    return out
+
+
+# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
+def write_all(stream: BinaryIO, data: Buffer, /) -> None:
+    """Write all bytes from ``data`` to ``stream`` or raise ``EOFError``."""
+    # perf: fast path for BytesIO
+    if type(stream) is BytesIO:
+        stream.write(data)
+        return
+    total = len(data)
+    write = stream.write
+    n = write(data)
+    if n < total:
+        # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
+        mv = memoryview(data)
+        while n < total:
+            written = write(mv[n:])
+            n += written
+        mv.release()  # not required but explicitly release memoryview
 
 
 class BufferingStream:

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 import msgspec
 
-from .._stream import ProtoBytesIO as BytesIO
 from .._stream import _decode_stream, _encode_stream
 from .._utils import derive_fmt
 from ._ref import Ref

@@ -3,6 +3,7 @@ import io
 import ipaddress
 from collections.abc import Buffer, Iterator, Mapping
 from copy import copy
+from io import BytesIO
 from types import NoneType
 from typing import Any, BinaryIO, Literal, assert_never, cast, get_type_hints, overload
 
@@ -15,9 +16,6 @@ from ._stream import (
     WriteBufferingStream,
     _decode_stream,
     _encode_stream,
-)
-from ._stream import (
-    ProtoBytesIO as BytesIO,
 )
 from ._utils import derive_fmt, sizeof
 

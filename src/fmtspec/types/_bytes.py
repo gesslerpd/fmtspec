@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Any, BinaryIO
 
+from .._stream import read_exactly, write_all
+
 
 @dataclass(frozen=True, slots=True)
 class Bytes:
@@ -17,12 +19,12 @@ class Bytes:
     def encode(self, value: bytes, stream: BinaryIO, **_: Any) -> None:
         if self.size is not None and len(value) != self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(value)}")
-        stream.write_all(value)
+        write_all(stream, value)
 
     def decode(self, stream: BinaryIO, **_: Any) -> bytes:
         if self.size is None:
             return stream.read()
-        return stream.read_exactly(self.size)
+        return read_exactly(stream, self.size)
 
 
 bytes_ = Bytes()

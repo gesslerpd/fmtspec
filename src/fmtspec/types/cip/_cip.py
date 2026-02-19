@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from io import SEEK_CUR
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 import msgspec
 
 from ..._protocol import Type  # noqa: TC001 (fails in msgspec if not truly imported)
+from ..._stream import peek
 from .._array import array
 from .._bitfield import Bitfield, Bitfields
 from .._int import Int, u8le, u16le, u32le, u64le
@@ -849,9 +849,7 @@ class CIPSegmentFmt:
         # set padding context for segment decoding
         context.store[_PADDED_SEGMENT] = self.padded
 
-        header_value = stream.read(1)[0]
-        # rewind to re-read header for segment types decode
-        stream.seek(-1, SEEK_CUR)
+        header_value = peek(stream, 1)[0]
 
         # Special case: ANSI Extended Symbol format (0x91)
         # This marker has segment type bits = 0b100 (data) but is actually
