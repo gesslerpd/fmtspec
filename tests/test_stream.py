@@ -181,3 +181,86 @@ def test_write_all_raises_when_initial_write_returns_none():
 
     with pytest.raises(TypeError):
         write_all(stream, b"abc")
+
+
+def test_read_exactly_zero_bytes_returns_empty_and_keeps_position():
+    stream = BytesIO(b"abcdef")
+    stream.seek(3)
+
+    data = read_exactly(stream, 0)
+
+    assert data == bytearray()
+    assert stream.tell() == 3
+
+
+def test_read_exactly_readinto_raises_eoferror_when_short():
+    class ShortReadIntoStream:
+        def __init__(self, data: bytes) -> None:
+            self._buf = bytearray(data)
+            self._pos = 0
+
+        def readinto(self, target) -> int:
+            if self._pos >= len(self._buf):
+                return 0
+            n = min(2, len(target), len(self._buf) - self._pos)
+            target[:n] = self._buf[self._pos : self._pos + n]
+            self._pos += n
+            return n
+
+    stream = ShortReadIntoStream(b"abc")
+
+    with pytest.raises(EOFError, match=r"Expected 5 bytes, got 3"):
+        read_exactly(stream, 5)
+
+
+def test_read_exactly_read_fallback_raises_eoferror_when_short():
+    class ShortReadOnlyStream:
+        def __init__(self, data: bytes) -> None:
+            self._buf = data
+            self._pos = 0
+
+        def read(self, size: int = -1) -> bytes:
+            if self._pos >= len(self._buf):
+                return b""
+            if size < 0:
+                size = len(self._buf) - self._pos
+            end = min(self._pos + size, len(self._buf))
+            chunk = self._buf[self._pos : end]
+            self._pos = end
+            return chunk
+
+    stream = ShortReadOnlyStream(b"xy")
+
+    with pytest.raises(EOFError, match=r"Expected 4 bytes, got 2"):
+        read_exactly(stream, 4)
+
+
+def test_peek_raises_eoferror_and_keeps_position_when_short():
+    stream = BytesIO(b"abc")
+    stream.seek(1)
+
+    with pytest.raises(EOFError, match=r"Expected 4 bytes, got 2"):
+        peek(stream, 4)
+
+    assert stream.tell() == 1
+
+
+def test_write_all_accepts_memoryview_input():
+    class CapturingStream:
+        def __init__(self) -> None:
+            self.writes: list[bytes] = []
+
+        def write(self, data) -> int:
+            chunk = bytes(data)
+            if not chunk:
+                return 0
+            n = min(2, len(chunk))
+            self.writes.append(chunk[:n])
+            return n
+
+    stream = CapturingStream()
+    payload = memoryview(b"abcdef")
+
+    write_all(stream, payload)
+
+    assert b"".join(stream.writes) == b"abcdef"
