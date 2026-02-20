@@ -1,7 +1,7 @@
 import inspect
 import io
 import ipaddress
-from collections.abc import Buffer, Iterator, Mapping
+from collections.abc import Buffer, Iterable, Iterator, Mapping
 from copy import copy
 from io import BytesIO
 from types import NoneType
@@ -74,15 +74,18 @@ _INIT_SUPPORTED_PARAM_KINDS = {
 }
 
 
-def _fix_inspect_offsets(children: list[InspectNode], parent_offset: int) -> None:
-    """Recursively fix offsets for children that came from sub-streams.
+def _normalize_inspect_tree(children: Iterable[InspectNode], parent_offset: int) -> None:
+    """Recursively normalize inspect tree.
 
-    Detects children whose offset is behind where the next contiguous byte
-    should be (i.e. they were created against a ``BytesIO`` starting at 0)
-    and shifts them so they are contiguous with preceding siblings.
+    - fix offsets for children that came from sub-streams
+    - shift children to be contiguous with preceding siblings
+    - convert all bytearrays to bytes
+
     """
     next_offset = parent_offset
     for child in children:
+        if isinstance(child.value, bytearray):
+            child.value = bytes(child.value)
         if child.offset < next_offset:
             shift = next_offset - child.offset
             child.offset = next_offset
@@ -90,10 +93,10 @@ def _fix_inspect_offsets(children: list[InspectNode], parent_offset: int) -> Non
                 _shift_children(child.children, shift)
         next_offset = child.offset + child.size
         if child.children:
-            _fix_inspect_offsets(child.children, child.offset)
+            _normalize_inspect_tree(child.children, child.offset)
 
 
-def _shift_children(children: list[InspectNode], shift: int) -> None:
+def _shift_children(children: Iterable[InspectNode], shift: int) -> None:
     """Shift offsets of all nodes in a list by a fixed amount."""
     for node in children:
         node.offset += shift
@@ -345,7 +348,7 @@ def _encode_stream_impl(
 
     if tree:
         # FUTURE: do this for exceptions inspect_node too?
-        _fix_inspect_offsets(tree.children, tree.offset)
+        _normalize_inspect_tree(tree.children, tree.offset)
 
     return tree
 
@@ -459,7 +462,7 @@ def _decode_stream_impl[T](
 
     if tree:
         # FUTURE: do this for exceptions inspect_node too?
-        _fix_inspect_offsets(tree.children, tree.offset)
+        _normalize_inspect_tree(tree.children, tree.offset)
 
     return result, tree
 
