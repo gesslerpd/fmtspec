@@ -18,13 +18,13 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from fmtspec import decode, encode, types
-from fmtspec._stream import peek, read_exactly, write_all
+from fmtspec import decode, decode_inspect, encode, encode_inspect, format_tree, types
+from fmtspec._protocol import Context, InspectNode
+from fmtspec._stream import _inspect_leaf, _inspect_scope, peek, read_exactly, write_all
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from types import EllipsisType
-
-    from fmtspec._protocol import Context
 
 
 type ASN1Class = Literal["universal", "application", "context", "private"]
@@ -316,6 +316,50 @@ class ASN1:
 
     size: ClassVar[EllipsisType] = ...
 
+    def _encode_constructed_body_with_nodes(
+        self, items: list[ASN1Node], context: Context
+    ) -> tuple[bytes, Iterable[InspectNode]]:
+        buf = BytesIO()
+        # create a new context to avoid mutating the parent context inspect_node
+        child_context = Context(inspect=context.inspect)
+        for i, item in enumerate(items):
+            with _inspect_scope(buf, child_context, i, self, item):
+                self.encode(item, buf, context=child_context)
+
+        return buf.getvalue(), child_context.inspect_children
+
+    def _decode_constructed_items_greedy(self, stream, context: Context):
+        i = 0
+        while True:
+            if peek(stream, 2) == b"\x00\x00":
+                eoc_start = stream.tell()
+                eoc_marker = read_exactly(stream, 2)
+                _inspect_leaf(stream, context, "--eoc--", types.Bytes(2), eoc_marker, eoc_start)
+                return
+
+            with _inspect_scope(stream, context, i, self, None) as node:
+                item = self.decode(stream, context=context)
+                if node:
+                    node.value = item
+
+            yield item
+            i += 1
+
+    def _decode_constructed_items(self, stream, context: Context, length: int):
+        i = 0
+        end = stream.tell() + length
+
+        while stream.tell() < end:
+            with _inspect_scope(stream, context, i, self, None) as node:
+                item = self.decode(stream, context=context)
+                if node:
+                    node.value = item
+            yield item
+            i += 1
+
+        if stream.tell() != end:
+            raise ValueError("Constructed value length mismatch")
+
     def encode(self, value: ASN1Node, stream, *, context: Context) -> None:
         tag_class: ASN1Class = value.get("tag_class", "universal")
         tag: int = value["tag"]
@@ -325,53 +369,57 @@ class ASN1:
         if constructed is None:
             constructed = tag_class == "universal" and tag in CONSTRUCTED_TAGS
 
+        body_nodes = []
         if constructed:
             if not isinstance(inner_value, list):
                 raise TypeError("Constructed ASN.1 node value must be a list of child nodes")
-            buf = BytesIO()
-            for item in inner_value:
-                self.encode(item, buf, context=context)
-            body = buf.getvalue()
+            body, body_nodes = self._encode_constructed_body_with_nodes(inner_value, context)
         elif tag_class == "universal":
             body = _encode_universal_primitive(tag, inner_value)
         else:
             body = bytes(inner_value)
 
-        ASN1_TAG.encode((tag_class, tag, constructed), stream, context=context)
+        tag_start = stream.tell()
+        tag_tuple = (tag_class, tag, constructed)
+        ASN1_TAG.encode(tag_tuple, stream, context=context)
+        _inspect_leaf(stream, context, "tag", ASN1_TAG, tag_tuple, tag_start)
+
+        length_start = stream.tell()
         ASN1_LENGTH.encode(len(body), stream, context=context)
+        _inspect_leaf(stream, context, "--len--", ASN1_LENGTH, len(body), length_start)
+
         write_all(stream, body)
-
-    def _decode_constructed_definite(self, data: bytes, context: Context):
-        inner = BytesIO(data)
-        while inner.tell() < len(data):
-            yield self.decode(inner, context=context)
-
-    def _decode_constructed_indefinite(self, stream, context: Context):
-        while True:
-            probe = peek(stream, 2)
-            if probe == b"\x00\x00":
-                read_exactly(stream, 2)
-                return
-            yield self.decode(stream, context=context)
+        if body_nodes:
+            context.inspect_children.extend(body_nodes)
+        else:
+            body_start = stream.tell() - len(body)
+            _inspect_leaf(stream, context, "value", types.Bytes(len(body)), inner_value, body_start)
 
     def decode(self, stream, *, context: Context) -> ASN1Node:
-        tag_class, tag, constructed = ASN1_TAG.decode(stream, context=context)
+        tag_start = stream.tell()
+        tag_tuple = ASN1_TAG.decode(stream, context=context)
+        tag_class, tag, constructed = tag_tuple
+        _inspect_leaf(stream, context, "tag", ASN1_TAG, tag_tuple, tag_start)
+
+        length_start = stream.tell()
         length = ASN1_LENGTH.decode(stream, context=context)
+        _inspect_leaf(stream, context, "--len--", ASN1_LENGTH, length, length_start)
 
         if constructed:
             if length is None:
-                value = list(self._decode_constructed_indefinite(stream, context))
+                value = list(self._decode_constructed_items_greedy(stream, context=context))
             else:
-                body = read_exactly(stream, length)
-                value = list(self._decode_constructed_definite(body, context))
+                value = list(self._decode_constructed_items(stream, context=context, length=length))
         else:
             if length is None:
                 raise ValueError("Indefinite length is only valid for constructed values")
+            body_start = stream.tell()
             body = read_exactly(stream, length)
             if tag_class == "universal":
                 value = _decode_universal_primitive(tag, body)
             else:
                 value = body
+            _inspect_leaf(stream, context, "value", types.Bytes(length), value, body_start)
 
         return {
             "tag_class": tag_class,
@@ -515,9 +563,111 @@ def test_decode_known_der_sample() -> None:
     assert encode(decoded, asn1) == sample
 
 
+def test_inspect_sequence_has_tlv_children() -> None:
+    node = {
+        "tag": UniversalTag.SEQUENCE,
+        "constructed": True,
+        "value": [
+            {"tag": UniversalTag.INTEGER, "value": 42},
+            {"tag": UniversalTag.OCTET_STRING, "value": b"hi"},
+        ],
+    }
+
+    encoded, encode_tree = encode_inspect(node, asn1)
+    assert encoded == b"\x30\x07\x02\x01\x2a\x04\x02hi"
+    encode_keys = [child.key for child in encode_tree.children]
+    assert encode_keys[2:] == [0, 1]
+
+    decoded, decode_tree = decode_inspect(encoded, asn1)
+    assert decoded == {
+        "tag_class": "universal",
+        "tag": UniversalTag.SEQUENCE,
+        "constructed": True,
+        "value": [
+            {
+                "tag_class": "universal",
+                "tag": UniversalTag.INTEGER,
+                "constructed": False,
+                "value": 42,
+            },
+            {
+                "tag_class": "universal",
+                "tag": UniversalTag.OCTET_STRING,
+                "constructed": False,
+                "value": b"hi",
+            },
+        ],
+    }
+    decode_keys = [child.key for child in decode_tree.children]
+    assert decode_keys[2:] == [0, 1]
+
+
+def test_inspect_constructed_context_tree_encode_decode() -> None:
+    node = {
+        "tag_class": "context",
+        "tag": 1,
+        "constructed": True,
+        "value": [
+            {"tag": UniversalTag.INTEGER, "value": 7},
+            {"tag": UniversalTag.OCTET_STRING, "value": b"ok"},
+        ],
+    }
+
+    encoded, encode_tree = encode_inspect(node, asn1)
+    assert encoded == b"\xa1\x07\x02\x01\x07\x04\x02ok"
+
+    encode_keys = [child.key for child in encode_tree.children]
+    assert encode_keys[0] in {"tag", "--tag--"}
+    assert encode_keys[1] == "--len--"
+    assert encode_keys[2:] == [0, 1]
+
+    first_child_keys = [child.key for child in encode_tree.children[2].children]
+    second_child_keys = [child.key for child in encode_tree.children[3].children]
+    assert first_child_keys[0] in {"tag", "--tag--"}
+    assert second_child_keys[0] in {"tag", "--tag--"}
+    assert first_child_keys[1:] == ["--len--", "value"]
+    assert second_child_keys[1:] == ["--len--", "value"]
+
+    decoded, decode_tree = decode_inspect(encoded, asn1)
+    assert decoded == {
+        "tag_class": "context",
+        "tag": 1,
+        "constructed": True,
+        "value": [
+            {
+                "tag_class": "universal",
+                "tag": UniversalTag.INTEGER,
+                "constructed": False,
+                "value": 7,
+            },
+            {
+                "tag_class": "universal",
+                "tag": UniversalTag.OCTET_STRING,
+                "constructed": False,
+                "value": b"ok",
+            },
+        ],
+    }
+
+    decode_keys = [child.key for child in decode_tree.children]
+    assert decode_keys[0] in {"tag", "--tag--"}
+    assert decode_keys[1] == "--len--"
+    assert decode_keys[2:] == [0, 1]
+
+    encode_nodes = list(encode_tree.children)
+    decode_nodes = list(decode_tree.children)
+    encode_layout = [[child.key for child in node.children] for node in encode_nodes[2:]]
+    decode_layout = [[child.key for child in node.children] for node in decode_nodes[2:]]
+    assert encode_layout == decode_layout
+    assert format_tree(encode_tree) == format_tree(decode_tree)
+    print()
+    print(format_tree(encode_tree))
+
+
 def test_decode_x509_certificate() -> None:
     certificate_der = Path(__file__).parent / "apple.der"
-    certificate = decode(certificate_der.read_bytes(), asn1)
+    data = certificate_der.read_bytes()
+    certificate, tree = decode_inspect(data, asn1)
 
     assert certificate["tag"] == UniversalTag.SEQUENCE
     assert certificate["constructed"]
@@ -543,3 +693,15 @@ def test_decode_x509_certificate() -> None:
     subject_org = subject["value"][1]["value"][0]["value"][1]["value"]
     assert issuer_org == "DigiCert Inc"
     assert subject_org == "Apple Inc."
+
+    print("Certificate decoded successfully with inspection:")
+    dec_tree = format_tree(tree)
+    print(dec_tree)
+
+    encoded_data, tree = encode_inspect(certificate, asn1)
+    print("Certificate encoded successfully with inspection:")
+    enc_tree = format_tree(tree)
+    print(enc_tree)
+    assert encoded_data == data
+    assert len(data) == 1314
+    assert dec_tree == enc_tree
