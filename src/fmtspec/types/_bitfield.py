@@ -145,7 +145,7 @@ class Bitfields:
 
         object.__setattr__(self, "_offsets", offsets)
 
-    def encode(self, value: dict[str, int], stream: BinaryIO, **_: Any) -> None:
+    def encode_int(self, value: dict[str, int]) -> int:
         int_val = 0
         for name, bitfield in self.fields.items():
             if name not in value:
@@ -154,7 +154,13 @@ class Bitfields:
             if val < 0 or val > bitfield.mask:
                 raise ValueError(f"Value {val} for field {name!r} out of range")
             int_val |= val << self._offsets[name]
+        return int_val
+
+    def encode(self, value: dict[str, int], stream: BinaryIO, **_: Any) -> None:
+        # start = stream.tell()
+        int_val = self.encode_int(value)
         self._int_type.encode(int_val, stream, **_)
+        # self._inspect_fields(value, stream, context, start)
 
     def _decode_bitfield(self, bitfield, name, int_val):
         raw = (int_val >> self._offsets[name]) & bitfield.mask
@@ -172,5 +178,16 @@ class Bitfields:
         }
 
     def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:
+        # start = stream.tell()
         int_val = self._int_type.decode(stream, **_)
-        return self.decode_int(int_val)
+        value = self.decode_int(int_val)
+        # self._inspect_fields(value, stream, context, start)
+        return value
+
+    # def _inspect_fields(
+    #     self, value: dict[str, int], stream: BinaryIO, context: Context, start: int
+    # ) -> None:
+    #     from .._stream import _inspect_leaf
+
+    #     for name, bitfield in self.fields.items():
+    #         _inspect_leaf(stream, context, name, bitfield, value[name], start)

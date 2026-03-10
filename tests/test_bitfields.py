@@ -4,7 +4,16 @@ from typing import Annotated
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode, sizeof
+from fmtspec import (
+    DecodeError,
+    EncodeError,
+    decode,
+    decode_inspect,
+    encode,
+    encode_inspect,
+    format_tree,
+    sizeof,
+)
 from fmtspec.types import Bitfield, Bitfields, u16
 
 
@@ -488,6 +497,73 @@ def test_bitfields_field_enum_roundtrip():
     result = decode(data, bf)
     assert result == obj
     assert result["perm"].name == "WRITE"
+
+
+def test_bitfields_encode_inspect_tree():
+    bf = Bitfields(
+        size=1,
+        fields={
+            "flag": Bitfield(bits=1),
+            "mode": Bitfield(bits=3, offset=4),
+        },
+    )
+
+    obj = {"flag": True, "mode": 0b101}
+    data, tree = encode_inspect(obj, bf)
+
+    assert data == b"\x51"
+    assert tree.value == obj
+    assert tree.fmt is bf
+
+    formatted = format_tree(tree)
+    assert "Bitfields" in formatted
+    # assert "[flag] Bitfield @ bits [0:1]" in formatted
+    # assert "[mode] Bitfield @ bits [4:7]" in formatted
+    assert "data: 51" in formatted
+    # assert "value: True" in formatted
+    # assert "value: 5" in formatted
+
+
+def test_bitfields_decode_inspect_tree():
+    bf = Bitfields(
+        size=1,
+        fields={
+            "flag": Bitfield(bits=1),
+            "mode": Bitfield(bits=3, offset=4),
+        },
+    )
+
+    result, tree = decode_inspect(b"\x51", bf)
+
+    assert result == {"flag": True, "mode": 0b101}
+    assert tree.value == result
+
+
+def test_mapping_bitfields_format_tree_groups_members():
+    fmt = {
+        "head": u16,
+        "flag": Bitfield(bits=1, offset=1),
+        "mode": Bitfield(bits=3, offset=4),
+        "tail": u16,
+    }
+    obj = {"head": 0x1234, "flag": True, "mode": 0b101, "tail": 0x5678}
+
+    data, tree = encode_inspect(obj, fmt)
+
+    assert data == b"\x12\x34\x52\x56\x78"
+    assert [child.key for child in tree.children] == ["head", "flag", "tail"]
+
+    bitfields_node = tree.children[1]
+    assert isinstance(bitfields_node.fmt, Bitfields)
+    assert bitfields_node.value == {"flag": True, "mode": 0b101}
+
+    formatted = format_tree(tree)
+    print(formatted)
+    assert "[flag] Bitfields" in formatted
+    assert "data: 52" in formatted
+    # assert "[flag] Bitfield @ bits [1:2]" in formatted
+    # assert "[mode] Bitfield @ bits [4:7]" in formatted
+    assert "[tail] Int" in formatted
 
 
 @dataclass

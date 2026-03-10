@@ -11,6 +11,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, overload
 
 from ._core import _decode_stream_impl, _encode_stream_impl
+from .types import Bitfield, Bitfields
 
 if TYPE_CHECKING:
     from ._dataview import ViewNode
@@ -148,9 +149,15 @@ def _format_node(  # noqa: PLR0913
     fmt_name = _get_format_name(node.fmt)
 
     # Build the header line
-    end_offset = node.offset + node.size
+    if is_bitfield := isinstance(node.fmt, Bitfield):
+        bit_end = node.fmt.offset + node.fmt.bits
+        span = f"bits [{node.fmt.offset}:{bit_end}] ({node.fmt.bits} bits)"
+    else:
+        end_offset = node.offset + node.size
+        span = f"[{node.offset}:{end_offset}] ({node.size} bytes)"
+
     length = f" ({len(node.children)} items)" if node.children else ""
-    header = f"{lookup_key} {fmt_name} @ [{node.offset}:{end_offset}] ({node.size} bytes){length}"
+    header = f"{lookup_key} {fmt_name} @ {span}{length}"
 
     if is_root:
         yield f"{prefix}{header}"
@@ -162,7 +169,7 @@ def _format_node(  # noqa: PLR0913
 
     depth_limit = max_depth == 0
 
-    if not node.children or not only_leaf or depth_limit:
+    if not node.children or not only_leaf or depth_limit or isinstance(node.fmt, Bitfields):
         sub_indent = indent
         if node.children:
             sub_indent = "│" + indent[1:]
@@ -171,7 +178,8 @@ def _format_node(  # noqa: PLR0913
         yield f"{child_prefix}{sub_indent}value: {value_repr}"
 
         # Add data line if requested
-        if show_data and node.data:
+        # don't show data for bitfield nodes (parent shows the data for the whole bitfield)
+        if show_data and node.data and not is_bitfield:
             data_hex = _format_hex(node.data, limit=max_data_bytes)
             yield f"{child_prefix}{sub_indent}data: {data_hex}"
 
