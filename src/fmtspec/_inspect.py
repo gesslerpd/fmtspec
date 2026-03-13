@@ -11,11 +11,20 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, overload
 
 from ._core import _decode_stream_impl, _encode_stream_impl
+from ._exceptions import DecodeError, EncodeError
 from .types import Bitfield, Bitfields
 
 if TYPE_CHECKING:
-    from ._dataview import ViewNode
     from ._protocol import Format, InspectNode
+
+
+def _attach_buffer_tree(
+    node: InspectNode,
+    buffer: memoryview,
+):
+    node.buffer = buffer[node.offset : node.offset + node.size]
+    for child in node.children:
+        _attach_buffer_tree(child, buffer)
 
 
 def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
@@ -37,8 +46,15 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
         >>> print(format_tree(tree))
     """
     stream = BytesIO()
-    tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
-    return stream.getvalue(), tree
+    try:
+        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+    except EncodeError as exc:
+        assert exc.inspect_node is not None
+        _attach_buffer_tree(exc.inspect_node, stream.getbuffer())
+        raise
+    buffer = stream.getbuffer()
+    _attach_buffer_tree(tree, buffer)
+    return bytes(buffer), tree
 
 
 @overload
@@ -71,11 +87,18 @@ def decode_inspect[T](
         >>> print(format_tree(tree))
     """
     stream = BytesIO(data)
-    return _decode_stream_impl(stream, fmt, shape=shape, inspect=True)
+    try:
+        result, tree = _decode_stream_impl(stream, fmt, shape=shape, inspect=True)
+    except DecodeError as exc:
+        assert exc.inspect_node is not None
+        _attach_buffer_tree(exc.inspect_node, stream.getbuffer())
+        raise
+    _attach_buffer_tree(tree, stream.getbuffer())
+    return result, tree
 
 
 def format_tree(  # noqa: PLR0913
-    node: InspectNode | ViewNode,
+    node: InspectNode,
     *,
     indent: str = "  ",
     show_data: bool = True,
@@ -125,7 +148,7 @@ def format_tree(  # noqa: PLR0913
 
 
 def _format_node(  # noqa: PLR0913
-    node: InspectNode | ViewNode,
+    node: InspectNode,
     prefix: str,
     is_last: bool,
     is_root: bool,

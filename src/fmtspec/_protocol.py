@@ -29,15 +29,30 @@ class InspectNode(Struct, kw_only=True, gc=False):
 
     key: str | int | None
     fmt: Format
-    data: bytes
     value: Any
+    # FUTURE: use start/end offsets instead of offset/size?
     offset: int
     size: int = 0
     children: deque[InspectNode] = field(default_factory=deque)
+    buffer: memoryview | None = None
+    _map: dict[str | int | None, InspectNode] | None = None
+    _data: bytes | None = None
 
-    def __post_init__(self):
-        if not self.size:
-            self.size = len(self.data)
+    @property
+    def data(self) -> bytes:
+        buffer = self.buffer
+        if buffer is None:
+            raise RuntimeError("InspectNode buffer is not attached")
+        if self._data is None:
+            self._data = bytes(buffer)
+        return self._data
+
+    def __getitem__(self, key: str | int | None) -> InspectNode:
+        node_map = self._map
+        if node_map is None:
+            node_map = {child.key: child for child in self.children}
+            self._map = node_map
+        return node_map[key]
 
     def __repr__(self) -> str:
         children_repr = f", children=[...] * {len(self.children)}" if self.children else ""
@@ -45,6 +60,43 @@ class InspectNode(Struct, kw_only=True, gc=False):
             f"FormatNode(key={self.key!r}, fmt={self.fmt!r}, "
             f"offset={self.offset}, size={self.size}, value={self.value!r}{children_repr})"
         )
+
+
+# class ViewNode(Struct, kw_only=True, gc=False):
+#     key: str | int | None
+#     buffer: memoryview
+#     offset: int
+#     size: int
+#     children: list[ViewNode]
+#     fmt: Format
+#     _map: dict[str | int | None, ViewNode] = field(default_factory=dict)
+
+#     def __post_init__(self):
+#         object.__setattr__(self, "_map", {child.key: child for child in self.children})
+
+#     def __getitem__(self, key):
+#         return self._map[key]
+
+#     @property
+#     def data(self) -> Any:
+#         return bytes(self.buffer)
+
+#     @data.setter
+#     def data(self, value: Any) -> None:
+#         self.buffer[:] = value
+
+#     @property
+#     def value(self) -> Any:
+#         return decode_stream(
+#             BytesIO(self.buffer),
+#             self.fmt,
+#         )
+
+#     @value.setter
+#     def value(self, value: Any) -> None:
+#         stream = BytesIO()
+#         encode_stream(value, stream, self.fmt)
+#         self.buffer[:] = stream.getbuffer()
 
 
 # FUTURE: remove gc=False optimization, lower risk for this

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from typing import cast
 
-from fmtspec import dataview, encode_inspect, format_tree, sizeof, types
+from fmtspec import encode_inspect, format_tree, sizeof, types
 
 type ListOfList[T] = Sequence[T | ListOfList[T]]
 
@@ -30,17 +30,16 @@ fmt = {
 }
 
 obj = {"header": {"version": 1, "flags": 2}, "data": 0x0304, "list": arr_data}
-data, tree = encode_inspect(obj, fmt)
+data, view = encode_inspect(obj, fmt)
 print("Tree with max_depth=2:")
-print(format_tree(tree, max_depth=2, only_leaf=False))
+print(format_tree(view, max_depth=2, only_leaf=False))
 
-view = dataview(tree)
 print("Version:", view["header"]["version"].data)
 print("Flags:", view["header"]["flags"].data)
 print("Data:", view["data"].data)
 
 # Modify values via different part of the view
-view["data"].data = view["header"].buffer
+view["data"].data = view["header"].data
 
 # print("Modified Data:", view["data"].data)
 assert view["list"].size == sizeof(fmt["list"])
@@ -50,10 +49,10 @@ view["list"][0][0][0][0].data = b"\x10"
 view["list"][0][0][0][1].data = b"\x14"
 view["list"][0][0][1][0].data = b"\x1e"
 
-# print(view["list"].value)
+print(view["list"].value)
 
 
 view["list"][0][0][0].value = [0xFF, 67]
 
 # print(format_tree(view, max_depth=1))
-print(format_tree(tree, max_depth=2))
+print(format_tree(view, max_depth=2))

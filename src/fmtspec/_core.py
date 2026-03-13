@@ -5,15 +5,13 @@ from collections.abc import Buffer, Iterable, Iterator, Mapping
 from copy import copy
 from io import BytesIO
 from types import NoneType
-from typing import Any, BinaryIO, Literal, assert_never, cast, get_type_hints, overload
+from typing import Any, BinaryIO, Literal, assert_never, get_type_hints, overload
 
 import msgspec
 
 from ._exceptions import DecodeError, EncodeError, ShapeError
 from ._protocol import Context, Format, InspectNode
 from ._stream import (
-    BufferingStream,
-    WriteBufferingStream,
     _decode_stream,
     _encode_stream,
 )
@@ -321,16 +319,9 @@ def _encode_stream_impl(
 
     ctx = Context(inspect=inspect)
 
-    # Wrap stream to capture bytes for inspection
-    if inspect:
-        buffering_stream = WriteBufferingStream(stream)
-        write_stream = cast("BinaryIO", buffering_stream)
-    else:
-        write_stream = stream
-
     try:
         # specify key=None for root node
-        tree = _encode_stream(obj, fmt, write_stream, context=ctx, key=None)
+        tree = _encode_stream(obj, fmt, stream, context=ctx, key=None)
     except EncodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -409,16 +400,9 @@ def _decode_stream_impl[T](
 
     ctx = Context(inspect=inspect)
 
-    # Wrap stream to capture bytes for inspection
-    if inspect:
-        buffering_stream = BufferingStream(stream)
-        read_stream: BinaryIO = cast("BinaryIO", buffering_stream)
-    else:
-        read_stream = stream
-
     try:
         # specify key=None for root node
-        result, tree = _decode_stream(read_stream, fmt, context=ctx, key=None)
+        result, tree = _decode_stream(stream, fmt, context=ctx, key=None)
     except DecodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise

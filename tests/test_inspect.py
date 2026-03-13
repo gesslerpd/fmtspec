@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import BinaryIO
 
+import pytest
+
 import fmtspec
 from fmtspec import format_tree, types
 from fmtspec._core import _decode_stream_impl, _encode_stream_impl
@@ -222,14 +224,15 @@ class TestFormatNode:
 
     def test_repr(self):
         """Test the repr of FormatNode."""
+        buffer = memoryview(bytearray(b"\x01"))
         node = fmtspec.InspectNode(
             key="test",
             fmt=types.Int(byteorder="big", signed=False, size=1),
-            data=b"\x01",
             value=1,
             offset=0,
             size=1,
             children=[],
+            buffer=buffer,
         )
         r = repr(node)
         assert "key='test'" in r
@@ -238,26 +241,125 @@ class TestFormatNode:
 
     def test_repr_with_children(self):
         """Test repr includes children indicator."""
+        buffer = memoryview(bytearray(b"\x01"))
         child = fmtspec.InspectNode(
             key="child",
             fmt=types.Int(byteorder="big", signed=False, size=1),
-            data=b"\x01",
+            value=1,
+            offset=0,
+            size=1,
+            children=[],
+            buffer=buffer,
+        )
+        parent = fmtspec.InspectNode(
+            key=None,
+            fmt={},
+            value={"child": 1},
+            offset=0,
+            size=1,
+            children=[child],
+            buffer=buffer,
+        )
+        r = repr(parent)
+        assert "children=[...]" in r
+
+    def test_data_requires_attached_buffer(self):
+        node = fmtspec.InspectNode(
+            key="test",
+            fmt=types.Int(byteorder="big", signed=False, size=1),
             value=1,
             offset=0,
             size=1,
             children=[],
         )
-        parent = fmtspec.InspectNode(
-            key=None,
-            fmt={},
-            data=b"\x01",
-            value={"child": 1},
-            offset=0,
-            size=1,
-            children=[child],
+
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = node.data
+
+
+class TestInspectNodeViews:
+    """Tests for direct view behavior on inspection nodes."""
+
+    def test_encode_inspect_returns_view_backed_tree(self):
+        fmt = {
+            "header": {
+                "version": types.Int(byteorder="big", signed=False, size=1),
+                "flags": types.Int(byteorder="big", signed=False, size=1),
+            },
+            "data": types.Int(byteorder="big", signed=False, size=2),
+        }
+        _, tree = fmtspec.encode_inspect(
+            {"header": {"version": 1, "flags": 2}, "data": 0x0304}, fmt
         )
-        r = repr(parent)
-        assert "children=[...]" in r
+
+        assert tree.buffer is not None
+        assert tree["header"].buffer is not None
+        assert tree["header"]["version"].buffer is not None
+        assert tree["header"]["version"].value == 1
+
+        assert tree["header"]["version"].data == b"\x01"
+        assert tree["data"].data == b"\x03\x04"
+
+    # def test_encode_inspect_tree_updates_bytes_and_values(self):
+    #     fmt = {
+    #         "header": {
+    #             "version": types.Int(byteorder="big", signed=False, size=1),
+    #             "flags": types.Int(byteorder="big", signed=False, size=1),
+    #         },
+    #         "data": types.Int(byteorder="big", signed=False, size=2),
+    #     }
+    #     _, tree = fmtspec.encode_inspect(
+    #         {"header": {"version": 1, "flags": 2}, "data": 0x0304}, fmt
+    #     )
+
+    #     tree["data"].data = b"\x05\x06"
+
+    #     assert tree["data"].value == 0x0506
+    #     assert tree.data == b"\x01\x02\x05\x06"
+    #     assert tree.value == {"header": {"version": 1, "flags": 2}, "data": 0x0506}
+
+    #     tree["header"].value = {"version": 9, "flags": 10}
+
+    #     assert tree.data == b"\x09\x0a\x05\x06"
+    #     assert tree["header"]["flags"].value == 10
+
+    #     output = format_tree(tree)
+    #     assert "09" in output
+    #     assert "0a" in output
+    #     assert "05 06" in output
+
+    # def test_decode_inspect_tree_updates_bytes_and_values(self):
+    #     fmt = {
+    #         "x": types.Int(byteorder="big", signed=False, size=1),
+    #         "y": types.Int(byteorder="big", signed=False, size=2),
+    #     }
+    #     _, tree = fmtspec.decode_inspect(b"\x01\x02\x03", fmt)
+
+    #     assert tree.buffer is not None
+    #     assert tree["y"].data == b"\x02\x03"
+
+    #     tree["y"].value = 0x0A0B
+
+    #     assert tree["y"].data == b"\x0a\x0b"
+    #     assert tree.data == b"\x01\x0a\x0b"
+    #     assert tree.value == {"x": 1, "y": 0x0A0B}
+
+    # def test_subtree_nodes_are_view_backed_without_conversion(self):
+    #     fmt = {
+    #         "prefix": types.Int(byteorder="big", signed=False, size=1),
+    #         "payload": types.Int(byteorder="big", signed=False, size=2),
+    #     }
+    #     _, tree = fmtspec.encode_inspect({"prefix": 1, "payload": 0x0203}, fmt)
+
+    #     payload = tree["payload"]
+
+    #     assert payload.buffer is not None
+    #     assert payload.data == b"\x02\x03"
+
+    #     payload.value = 0x0A0B
+
+    #     assert payload.data == b"\x0a\x0b"
+    #     assert payload.value == 0x0A0B
 
 
 class TestRoundtrip:
@@ -306,7 +408,6 @@ class TestEncodeInspectStream:
         assert tree.key is None  # root node
         assert tree.offset == 0
         assert tree.size == 2
-        assert tree.data == b"\x01\x02"
         assert tree.value == 0x0102
         assert not tree.children
 
@@ -324,7 +425,8 @@ class TestEncodeInspectStream:
         assert tree.key is None
         assert tree.offset == 0
         assert tree.size == 3
-        assert tree.data == b"\x01\x02\x03"
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.data
         assert len(tree.children) == 2
 
         # First child: x
@@ -332,16 +434,18 @@ class TestEncodeInspectStream:
         assert x_node.key == "x"
         assert x_node.offset == 0
         assert x_node.size == 1
-        assert x_node.data == b"\x01"
         assert x_node.value == 0x01
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = x_node.data
 
         # Second child: y
         y_node = tree.children[1]
         assert y_node.key == "y"
         assert y_node.offset == 1
         assert y_node.size == 2
-        assert y_node.data == b"\x02\x03"
         assert y_node.value == 0x0203
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = y_node.data
 
     def test_nested_structure(self):
         """Test stream inspection of nested structures."""
@@ -400,7 +504,6 @@ class TestEncodeInspectStream:
         assert tree1.offset == tree2.offset
         assert tree1.size == tree2.size
         assert tree1.value == tree2.value
-        assert tree1.data == tree2.data
 
 
 class TestDecodeInspectStream:
@@ -416,7 +519,6 @@ class TestDecodeInspectStream:
         assert tree.key is None
         assert tree.offset == 0
         assert tree.size == 2
-        assert tree.data == b"\x01\x02"
         assert tree.value == 0x0102
 
     def test_mapping_format(self):
@@ -492,7 +594,8 @@ class TestDecodeInspectStream:
         assert tree1.offset == tree2.offset
         assert tree1.size == tree2.size
         assert tree1.value == tree2.value
-        assert tree1.data == tree2.data
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree2.data
 
     def test_with_shape_parameter(self):
         """Test decode_inspect_stream with shape parameter."""
@@ -540,10 +643,12 @@ class TestUnseekableStreams:
         assert tree.value == {"x": 0x01, "y": 0x0203}
         assert len(tree.children) == 2
 
-        # captures data even for unseekable streams
-        assert tree.data == b"\x01\x02\x03"
-        assert tree.children[0].data == b"\x01"
-        assert tree.children[1].data == b"\x02\x03"
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.data
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.children[0].data
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.children[1].data
 
     def test_decode_unseekable_stream(self):
         """Test decode_inspect_stream with an unseekable stream."""
@@ -566,10 +671,12 @@ class TestUnseekableStreams:
         assert tree.value == {"x": 0x01, "y": 0x0203}
         assert len(tree.children) == 2
 
-        # captures data even for unseekable streams
-        assert tree.data == b"\x01\x02\x03"
-        assert tree.children[0].data == b"\x01"
-        assert tree.children[1].data == b"\x02\x03"
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.data
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.children[0].data
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.children[1].data
 
     def test_unseekable_nested_structure(self):
         """Test unseekable stream with nested structures."""
@@ -587,13 +694,14 @@ class TestUnseekableStreams:
         stream = UnseekableStream(backing)
         tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
 
-        # captures data even for nested unseekable streams
         assert tree.size == 4
-        assert tree.data == b"\x01\x02\x03\x04"
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.data
         assert len(tree.children) == 2
         assert tree.children[0].key == "header"
         assert len(tree.children[0].children) == 2
-        assert tree.children[0].data == b"\x01\x02"
+        with pytest.raises(RuntimeError, match="buffer is not attached"):
+            _ = tree.children[0].data
 
 
 class TestArrayInspect:

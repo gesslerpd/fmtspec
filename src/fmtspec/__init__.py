@@ -11,7 +11,6 @@ from ._exceptions import Error as Error
 from ._inspect import decode_inspect as decode_inspect
 from ._inspect import encode_inspect as encode_inspect
 from ._inspect import format_tree as format_tree
-from ._dataview import dataview as dataview
 from ._protocol import InspectNode as InspectNode
 from ._utils import derive_fmt as derive_fmt
 from ._utils import sizeof as sizeof

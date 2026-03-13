@@ -6,7 +6,7 @@ import contextlib
 from collections import deque
 from collections.abc import Buffer, Iterable, Mapping
 from io import SEEK_CUR, BytesIO
-from typing import TYPE_CHECKING, Any, BinaryIO, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from ._protocol import Context, Format, InspectNode
 
@@ -14,14 +14,6 @@ from ._protocol import Context, Format, InspectNode
 
 if TYPE_CHECKING:
     from .types import Bitfields
-
-
-class StreamWrapper(Protocol):
-    """Protocol for stream wrappers with byte extraction."""
-
-    def get_bytes(self, start: int, end: int) -> bytes:
-        """Extract bytes from buffer at the given offsets."""
-        ...
 
 
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
@@ -89,84 +81,6 @@ def write_all(stream: BinaryIO, data: Buffer, /) -> None:
         mv.release()  # not required but explicitly release memoryview
 
 
-class BufferingStream:
-    """Wrapper stream that buffers read bytes for inspection.
-
-    Works with both seekable and unseekable streams by capturing
-    all bytes read during inspection mode.
-    """
-
-    def __init__(self, stream: BinaryIO) -> None:
-        self._stream = stream
-        self._buffer = bytearray()
-        # Track the initial position of the underlying stream
-        try:
-            self._start_offset = stream.tell()
-        except (AttributeError, OSError):
-            self._start_offset = 0
-
-    def read(self, size: int = -1) -> bytes:
-        """Read bytes and append to buffer."""
-        data = self._stream.read(size)
-        self._buffer.extend(data)
-        return data
-
-    def tell(self) -> int:
-        """Return the current position relative to start."""
-        return self._start_offset + len(self._buffer)
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        """Seek the underlying stream when supported."""
-        return self._stream.seek(offset, whence)
-
-    def get_bytes(self, start: int, end: int) -> bytes:
-        """Extract bytes from buffer at the given offsets."""
-        # with memoryview(self._buffer) as mv:
-        #     data = mv[start:end]
-        # return bytes(data)
-        # memoryview is cheap to create and avoids intermediate bytearray slice copy
-        return bytes(memoryview(self._buffer)[start:end])
-
-
-class WriteBufferingStream:
-    """Wrapper stream that buffers written bytes for inspection.
-
-    Works with both seekable and unseekable streams by capturing
-    all bytes written during inspection mode.
-    """
-
-    def __init__(self, stream: BinaryIO) -> None:
-        self._stream = stream
-        self._buffer = bytearray()
-        # Track the initial position of the underlying stream
-        try:
-            self._start_offset = stream.tell()
-        except (AttributeError, OSError):
-            self._start_offset = 0
-
-    def write(self, data: Buffer) -> int:
-        """Write bytes to stream and append to buffer."""
-        result = self._stream.write(data)
-        # perf: extend avoids reallocating a new bytearray
-        # perf: `.extend(data)` is slightly faster than `+= data`
-        self._buffer.extend(data)  # type: ignore[arg-type]
-        return result
-
-    def tell(self) -> int:
-        """Return the current position relative to start."""
-        return self._start_offset + len(self._buffer)
-
-    def get_bytes(self, start: int, end: int) -> bytes:
-        """Extract bytes from buffer at the given offsets."""
-        relative_start = start - self._start_offset
-        relative_end = end - self._start_offset
-        # with memoryview(self._buffer) as mv:
-        #     data = mv[relative_start:relative_end]
-        # return bytes(data)
-        # memoryview is cheap to create and avoids intermediate bytearray slice copy
-        return bytes(memoryview(self._buffer)[relative_start:relative_end])
-
-
 def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
     """Collect contiguous Bitfield groups from a mapping format.
 
@@ -224,15 +138,6 @@ def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
     return groups
 
 
-def _get_stream_bytes(stream: BinaryIO, start: int, end: int) -> bytes:
-    get_bytes = getattr(stream, "get_bytes", None)
-    if get_bytes:
-        return get_bytes(start, end)
-    if type(stream) is BytesIO:
-        return bytes(stream.getbuffer()[start:end])  # type: ignore
-    raise TypeError(f"Cannot extract bytes from {type(stream)}")
-
-
 def _inspect_leaf(
     stream: BinaryIO,
     context: Context,
@@ -260,13 +165,13 @@ def _inspect_leaf(
     """
     if not context.inspect:
         return
-    data = _get_stream_bytes(stream, start, stream.tell())
+    size = stream.tell() - start
     node = InspectNode(
         key=key,
         fmt=fmt,
-        data=data,
         value=value,
         offset=start,
+        size=size,
     )
     if prepend:
         context.inspect_children.appendleft(node)
@@ -293,7 +198,6 @@ def _inspect_scope_inner(
     node = InspectNode(
         key=key,
         fmt=fmt,
-        data=b"",
         value=value,
         offset=start_offset,
         children=children,
@@ -304,9 +208,7 @@ def _inspect_scope_inner(
     yield node
 
     end_offset = stream.tell()
-    data = _get_stream_bytes(stream, start_offset, end_offset)
-    node.data = data
-    node.size = len(data)
+    node.size = end_offset - start_offset
 
     context.inspect_children = parent_children
     if parent_children is not None:
