@@ -190,7 +190,7 @@ class InitialFrame:
     def encode(self, value: dict[str, Any], stream, *, context) -> None:
         header = dict(value["header"])
         is_text = header["opcode"] == Opcode.TEXT
-        payload_key = "payload" if is_text else "payload"
+        payload_key = "payload"
         if payload_key not in value:
             raise ValueError(f"Missing {payload_key!r} for initial frame")
 
@@ -253,7 +253,7 @@ class DataFrame:
         header = decode_stream(stream, self.header_fmt, context=context, key="header")
         context.pop_path()
 
-        payload_key = "payload" if self.text_mode else "payload"
+        payload_key = "payload"
         context.push_path(payload_key)
         payload = _decode_payload(
             stream,

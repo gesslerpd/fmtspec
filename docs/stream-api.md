@@ -1,8 +1,8 @@
 # Stream and Custom Type API
 
-This page covers the public low-level helpers in `fmtspec.stream` plus the `Context` methods that custom `Type` implementations rely on.
+This page documents the public low-level helpers in `fmtspec.stream` and the `Context` methods that custom `Type` implementations rely on.
 
-For normal application code, prefer the top-level `fmtspec.encode_stream(...)` and `fmtspec.decode_stream(...)`. The functions documented here are the nested-delegation layer used from inside a custom type.
+For normal application code, prefer the top-level `fmtspec.encode_stream(...)` and `fmtspec.decode_stream(...)`. The functions documented here are the nested delegation layer used inside a custom type.
 
 ## `fmtspec.stream`
 
@@ -28,7 +28,7 @@ Write the full payload, retrying partial writes if needed.
 
 ### `peek(stream, size) -> bytes`
 
-Read exactly `size` bytes and restore the stream position afterwards.
+Read exactly `size` bytes and then restore the stream position.
 
 This requires a seekable stream because the implementation rewinds with `seek(...)`.
 
@@ -48,7 +48,7 @@ assert stream.tell() == 2
 
 Every public fmtspec `Type` receives a `Context` object.
 
-The most important responsibilities are:
+Its main responsibilities are:
 
 - keeping the parent stack used by `Ref(...)` and sibling-aware formats
 - tracking the logical path for error reporting
@@ -76,7 +76,7 @@ Create an intermediate inspection node whose children will be filled by nested w
 
 Use this for logical containers such as frames, TLV bodies, recursive nodes, or other grouped structures that should appear as a node in the tree.
 
-The yielded node may be updated later, which is useful during decode when the final value is not known up front.
+The yielded node can be updated later, which is useful during decode when the final value is not known up front.
 
 ## Custom `Type` Template
 
@@ -116,4 +116,4 @@ class MyType:
 
 - Frame-based protocols often write a small header manually, then delegate the payload to `encode_stream(...)` and `decode_stream(...)`.
 - TLV-style formats often combine `read_exactly(...)`, `write_all(...)`, and `inspect_leaf(...)` for tags and lengths.
-- Recursive or tree-like encodings often use `inspect_scope(...)` so the inspection output reflects logical structure rather than only raw byte operations.
+- Recursive or tree-like encodings often use `inspect_scope(...)` so the inspection output reflects logical structure instead of only raw byte operations.

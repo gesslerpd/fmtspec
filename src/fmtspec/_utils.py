@@ -89,7 +89,7 @@ def derive_fmt(cls: type) -> Format:
     return result
 
 
-def _extract_format(metadata: tuple) -> Format | None:  # noqa: PLR0911
+def _extract_format(metadata: tuple) -> Format | None:
     """Extract format from metadata tuple, handling nested Annotated types.
 
     Args:
@@ -118,7 +118,7 @@ def _extract_format(metadata: tuple) -> Format | None:  # noqa: PLR0911
     return None
 
 
-def _normalize_format(f: Any) -> Format:  # noqa: PLR0911
+def _normalize_format(f: Any) -> Format:
     """Normalize typing.Annotated and PEP 585 generics into runtime formats.
 
     Args:

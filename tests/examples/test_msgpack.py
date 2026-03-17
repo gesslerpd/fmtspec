@@ -243,7 +243,7 @@ class MsgPack:
         # self._array_by_tag[ARRAY16] = types.array(self, dims=types.u16)
         # self._array_by_tag[ARRAY32] = types.array(self, dims=types.u32)
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:  # noqa: PLR0912
         """Encode a Python value to MessagePack format."""
         # fast checks for performance
         t = type(value)
@@ -987,7 +987,7 @@ class TestMsgPackMap:
             assert result == value, f"Roundtrip failed for {value!r}"
 
 
-from fmtspec._core import frozendict
+from fmtspec._core import FrozenDict
 
 
 class TestMsgPackComplex:
@@ -1017,8 +1017,8 @@ class TestMsgPackComplex:
             -42: "neg_int_key",
             3.14: "float_key",
             b"": "empty_bytes_key",
-            frozendict(
-                {"frozen": "dict", "more": b"data", "nested": frozendict({42: "int_key"})}
+            FrozenDict(
+                {"frozen": "dict", "more": b"data", "nested": FrozenDict({42: "int_key"})}
             ): "frozendict_key",
         }
         data = encode(value, msgpack)

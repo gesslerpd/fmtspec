@@ -155,7 +155,7 @@ class Array:
 
     # post-init private
 
-    def __post_init__(self) -> None:
+    def __post_init__(self) -> None:  # noqa: PLR0912
         dims = self.dims
         ddims = False
         # empty-tuple dimension `()` means greedy: repeat until end of stream

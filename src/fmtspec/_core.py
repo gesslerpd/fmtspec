@@ -18,7 +18,7 @@ from ._stream import (
 from ._utils import derive_fmt, sizeof
 
 
-class frozendict(dict):
+class FrozenDict(dict):
     def __hash__(self) -> int:
         return hash(tuple(sorted(self.items())))
 
@@ -240,13 +240,13 @@ def _to_builtins(obj: Any, recursive: bool) -> Any:
     # # Extract preserved types before conversion
     # obj_with_placeholders = extract_preserved(obj, [])
 
+    result = obj
     try:
         result = msgspec.to_builtins(
             obj,
             builtin_types=BUILTIN_TYPES,
             enc_hook=None if recursive else _msgspec_encode_hook,
         )
-        return result
         # Restore preserved types after conversion
         # return restore_preserved(result)
     except TypeError:
@@ -257,11 +257,8 @@ def _to_builtins(obj: Any, recursive: bool) -> Any:
             raise
         types = get_type_hints(type(obj))
         if types:
-            result = {}
-            for k in types:
-                result[k] = _to_builtins(getattr(obj, k), recursive=recursive)
-            return result
-    return obj
+            result = {key: _to_builtins(getattr(obj, key), recursive=recursive) for key in types}
+    return result
 
 
 def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:

@@ -175,7 +175,7 @@ class Context(Struct, gc=False):
     def pop_path(self) -> None:
         self.path.pop()
 
-    def inspect_leaf(
+    def inspect_leaf(  # noqa: PLR0913
         self,
         stream: BinaryIO,
         key: str | int | None,

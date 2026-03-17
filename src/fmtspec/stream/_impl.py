@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Buffer
 from io import SEEK_CUR, BytesIO
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._protocol import Context, Format
 from .._stream import _decode_stream, _encode_stream
+
+if TYPE_CHECKING:
+    from collections.abc import Buffer
+
+    from .._protocol import Context, Format
 
 
 def encode_stream(

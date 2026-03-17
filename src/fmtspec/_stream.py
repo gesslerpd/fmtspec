@@ -5,11 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from ._protocol import Context, Format, InspectNode
-
 # keep this file stdlib/protocol-only to avoid circular imports
 
 if TYPE_CHECKING:
+    from ._protocol import Context, Format, InspectNode
     from .types import Bitfields
 
 
@@ -76,7 +75,7 @@ def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
 DEFAULT_KEY = None
 
 
-def _encode_stream(
+def _encode_stream(  # noqa: PLR0912
     obj: Any,
     fmt: Format,
     stream: BinaryIO,
@@ -156,7 +155,7 @@ def _encode_stream(
     return node
 
 
-def _decode_stream(  # noqa: PLR0912
+def _decode_stream(  # noqa: PLR0912, PLR0915
     stream: BinaryIO,
     fmt: Format,
     *,

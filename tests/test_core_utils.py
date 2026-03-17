@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import ClassVar
 
-from fmtspec._core import _convert, _create_new_instance, _to_builtins, frozendict, is_all_primitive
+from fmtspec._core import FrozenDict, _convert, _create_new_instance, _to_builtins, is_all_primitive
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,8 +153,8 @@ def test_to_builtins_special():
 
 
 def test_is_all_primitive_supports_frozendict_nested():
-    value = [frozendict({"b": 2}), {"c": (3, 4)}]
-    obj = {frozendict({"a": 1}): value}
+    value = [FrozenDict({"b": 2}), {"c": (3, 4)}]
+    obj = {FrozenDict({"a": 1}): value}
 
     assert is_all_primitive(obj) is True
 
@@ -168,13 +168,13 @@ def test_to_builtins_preserves_frozendict_keys_with_nested_values():
     # msgspec.to_builtins will raise TypeError if a dict key would become an
     # unhashable built-in dict; _to_builtins should fall back to returning the
     # original object when it's already all-primitive.
-    value = [frozendict({"b": 2}), {"c": (3, 4)}]
-    obj = {frozendict({"a": 1}): value}
+    value = [FrozenDict({"b": 2}), {"c": (3, 4)}]
+    obj = {FrozenDict({"a": 1}): value}
 
     result = _to_builtins(obj, recursive=False)
     assert result is obj
     (key,) = obj.keys()
-    assert isinstance(key, frozendict)
+    assert isinstance(key, FrozenDict)
 
 
 def test_frozendict_equality():
@@ -182,9 +182,9 @@ def test_frozendict_equality():
     b1 = {b"y": 2, "x": 1}
     c1 = {"x": 1, b"y": 3}
 
-    a = frozendict(a1)
-    b = frozendict(b1)
-    c = frozendict(c1)
+    a = FrozenDict(a1)
+    b = FrozenDict(b1)
+    c = FrozenDict(c1)
 
     assert a == b
     assert a1 == b

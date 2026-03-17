@@ -211,7 +211,7 @@ def test_write_all_writes_partial_stream_until_complete():
 
 def test_write_all_raises_when_initial_write_returns_none():
     class NoneWriteStream:
-        def write(self, data):
+        def write(self, _data):
             return None
 
     stream = NoneWriteStream()

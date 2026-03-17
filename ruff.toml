@@ -25,7 +25,7 @@ ignore = [
 ]
 
 [lint.pylint]
-max-returns = 3
+max-returns = 6
 
 [lint.per-file-ignores]
 # public API export files

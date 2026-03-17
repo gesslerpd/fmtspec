@@ -1,8 +1,8 @@
 # Core API Reference
 
-This page covers the public API exported from `fmtspec.__init__`.
+This page documents the public API exported from `fmtspec`.
 
-Use it when you want to understand how values move through encode, decode, shape conversion, inspection, and error reporting.
+Use it to understand how values move through encoding, decoding, shape conversion, inspection, and error reporting.
 
 ## The Main Entry Points
 
@@ -27,10 +27,10 @@ assert data == b"widget\0\x03\x00\x00\x00"
 
 ### `decode(data, fmt=None, *, shape=None, strict=False) -> Any`
 
-Decode a byte buffer into Python data.
+Decode a byte buffer into Python values.
 
-- `fmt` controls the wire layout.
-- `shape` converts the decoded builtins into a typed result and can also drive format derivation when `fmt` is omitted.
+- `fmt` defines the wire layout.
+- `shape` converts decoded builtins into a typed result and can also drive format derivation when `fmt` is omitted.
 - `strict=True` raises `DecodeError` if any trailing bytes remain after a successful decode.
 
 ```python
@@ -62,13 +62,13 @@ except DecodeError:
 
 Encode directly into a file-like object.
 
-Use this for files, sockets, or `BytesIO` when you do not want an intermediate `bytes` allocation.
+Use this for files, sockets, or `BytesIO` when you do not want to allocate an intermediate `bytes` object.
 
 ### `decode_stream(stream, fmt=None, *, shape=None) -> Any`
 
 Decode directly from a file-like object.
 
-This is the streaming counterpart to `decode(...)`. Unlike `decode(...)`, it does not have a `strict` flag. If you need full-consumption checks for a buffer, use `decode(..., strict=True)`.
+This is the streaming counterpart to `decode(...)`. Unlike `decode(...)`, it does not have a `strict` flag. If you need to verify that a buffer was fully consumed, use `decode(..., strict=True)`.
 
 ## Format Derivation and Size Information
 
@@ -82,7 +82,7 @@ Supported derivation inputs include:
 - `msgspec.Struct` classes
 - standard classes whose annotations carry fmtspec metadata
 
-Important boundary: format derivation is broader than shape conversion. In practice, `decode(..., shape=...)` is primarily the ergonomic path for dataclasses and `msgspec.Struct` values.
+Important boundary: format derivation is broader than shape conversion. In practice, `decode(..., shape=...)` is the ergonomic path for dataclasses and `msgspec.Struct` values.
 
 ```python
 from dataclasses import dataclass
@@ -103,7 +103,7 @@ assert derive_fmt(Header) == {
 }
 ```
 
-Rules worth knowing:
+Key rules:
 
 - field metadata usually comes from `typing.Annotated[T, fmt]`
 - nested annotated shapes are derived recursively
@@ -128,7 +128,7 @@ assert sizeof(types.Bytes()) is None
 
 ## Inspection
 
-Inspection is the debugging-oriented view of fmtspec. It records offsets, byte counts, nested structure, and values for each encode or decode step.
+Inspection is fmtspec's debugging-oriented view. It records offsets, byte counts, nested structure, and values for each encoding or decoding step.
 
 ### `encode_inspect(obj, fmt) -> tuple[bytes, InspectNode]`
 
@@ -140,7 +140,7 @@ Decode and return both the result and the root inspection node.
 
 ### `format_tree(node, *, indent="  ", show_data=True, max_data_bytes=24, only_leaf=True, max_depth=-1) -> str`
 
-Render an inspection tree into readable text.
+Render an inspection tree as readable text.
 
 ```python
 from fmtspec import encode_inspect, format_tree, types
@@ -156,7 +156,7 @@ Use the formatting options when you need a narrower view:
 
 - `show_data=False` hides raw hex bytes
 - `max_data_bytes` truncates long byte dumps
-- `only_leaf=False` shows values for container nodes too
+- `only_leaf=False` also shows values for container nodes
 - `max_depth` limits how deep the rendered tree goes
 
 ## Core Public Types
@@ -165,7 +165,7 @@ Use the formatting options when you need a narrower view:
 
 `Context` is the serialization state passed to every public `Type.encode(...)` and `Type.decode(...)` implementation.
 
-Important pieces:
+Important pieces include:
 
 - `parents`: sibling-access stack used by formats such as `Ref(...)`
 - `path`: current logical path for error reporting
@@ -176,7 +176,7 @@ Important pieces:
 - `inspect_leaf(...)`: add a manual leaf node
 - `inspect_scope(...)`: create an intermediate inspection node
 
-The practical custom-type pattern is covered in [stream-api.md](stream-api.md).
+See [stream-api.md](stream-api.md) for the standard custom-type pattern.
 
 ### `Type`
 
@@ -193,7 +193,7 @@ Formats conventionally expose a `size` attribute when they have a fixed width.
 
 Represents one node in the inspection tree.
 
-Commonly useful attributes are:
+Commonly useful attributes include:
 
 - `key`: field name, array index, or `None` for the root
 - `fmt`: format used at that node
@@ -221,7 +221,7 @@ Raised when decoding fails.
 
 Raised when fmtspec decoded the bytes successfully but could not convert the result into the requested `shape`.
 
-The exception objects preserve useful debugging state such as:
+Exception objects preserve useful debugging state such as:
 
 - the active format
 - the current object or partial result
@@ -229,7 +229,7 @@ The exception objects preserve useful debugging state such as:
 - the original cause
 - an inspection node when inspection was enabled
 
-Typical usage split:
+Typical usage:
 
 - `EncodeError` for missing fields, invalid literal values, or size mismatches during writing
 - `DecodeError` for truncated input, wrong markers, unknown tags, or trailing bytes with `strict=True`

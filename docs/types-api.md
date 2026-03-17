@@ -11,7 +11,7 @@ The goal is to help you choose the right building block, not just list names. St
 General fixed-width integer type.
 
 - `byteorder` is `"big"` or `"little"`
-- `signed` controls signed vs unsigned interpretation
+- `signed` controls signed or unsigned interpretation
 - `size` is `1`, `2`, `4`, `8`, or `16` bytes
 - `enum` may be an `IntEnum` or `IntFlag` subclass for automatic enum conversion on decode
 
@@ -41,8 +41,8 @@ Aliases: `f32`, `f64`, `f32be`, `f64be`, `f32le`, `f64le`
 
 Binary blob format.
 
-- with `size`, reads or writes exactly that many bytes
-- without `size`, greedily consumes the remaining stream
+- with `size`, it reads or writes exactly that many bytes
+- without `size`, it greedily consumes the remaining stream
 
 Alias: `bytes_`
 
@@ -50,12 +50,12 @@ Alias: `bytes_`
 
 Text format backed by encoded bytes.
 
-- with `size`, reads or writes exactly that many encoded bytes
-- without `size`, greedily consumes the remaining stream
+- with `size`, it reads or writes exactly that many encoded bytes
+- without `size`, it greedily consumes the remaining stream
 
 Aliases: `str_`, `str_utf8`, `str_ascii`
 
-In practice, greedy `Bytes()` and `Str()` are usually wrapped by `Sized(...)`, `TakeUntil(...)`, or an enclosing structure that already provides a boundary.
+In practice, greedy `Bytes()` and `Str()` are usually wrapped in `Sized(...)`, `TakeUntil(...)`, or an enclosing structure that already provides a boundary.
 
 ### `Literal(value, *, strict=True)`
 
@@ -80,7 +80,7 @@ Wrap another format whose byte length is determined at runtime.
 `length` can be:
 
 - an `int` for a fixed-width field
-- a `Ref(...)` that points at a sibling length value
+- a `Ref(...)` that points to a sibling length value
 - another type object that encodes and decodes the length header itself
 
 Other parameters:
@@ -95,7 +95,7 @@ This is the standard tool for length-prefixed payloads, fixed-width payload slot
 
 Repeatedly encode or decode `fmt` values until a terminator byte sequence is reached.
 
-Common uses are null-terminated strings and delimiter-separated byte fields.
+Common uses include null-terminated strings and delimiter-separated byte fields.
 
 ```python
 from fmtspec import decode, encode, types
@@ -139,13 +139,13 @@ Resolve a sibling value from the active `Context`.
 - `parent=1` means the current parent mapping
 - `cast` optionally transforms the resolved value before use
 
-`Ref(...)` is the glue used by array lengths, `Sized(...)`, and dispatch formats.
+`Ref(...)` connects array lengths, `Sized(...)`, and dispatch formats.
 
 ### `Switch(key, cases, default=None)`
 
-Choose a branch format from a sibling value.
+Choose a branch format based on a sibling value.
 
-This is useful when one earlier field determines the layout of the current field.
+Use this when an earlier field determines the layout of the current field.
 
 ```python
 from fmtspec import decode, encode, types
@@ -158,7 +158,7 @@ fmt = {
 assert decode(encode({"kind": 1, "body": 5}, fmt), fmt)["body"] == 5
 ```
 
-Practical note: `Switch(...)` works best when the selected branch is already bounded by the surrounding format, or when it is naturally the trailing part of a structure.
+Practical note: `Switch(...)` works best when the selected branch is already bounded by the surrounding format or is naturally the trailing part of a structure.
 
 ### `TaggedUnion(tag, fmt_map=...)`
 
@@ -186,7 +186,7 @@ This is intentionally narrow. It is mainly for trailing fields that may or may n
 
 Defer format construction until encode or decode time.
 
-Use this for recursive formats or situations where the format graph cannot be constructed eagerly.
+Use this for recursive formats or when the format graph cannot be constructed eagerly.
 
 ```python
 from fmtspec import types
@@ -218,7 +218,7 @@ When `bits == 1`, decoding returns `bool` unless `enum` is supplied.
 Pack multiple named `Bitfield(...)` definitions into one integer-backed value.
 
 - `size` may be omitted to infer the smallest supported container width
-- the result encodes and decodes dictionaries keyed by the field names
+- the result encodes and decodes dictionaries keyed by field name
 
 ```python
 from fmtspec import decode, encode, types

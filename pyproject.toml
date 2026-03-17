@@ -1,6 +1,6 @@
 [project]
 name = "fmtspec"
-version = "0.1.0"
+version = "0.2.0"
 description = "A flexible binary format serialization library for Python"
 readme = "README.md"
 authors = [

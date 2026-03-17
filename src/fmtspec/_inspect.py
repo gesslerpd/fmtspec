@@ -49,7 +49,7 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
     try:
         tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
     except EncodeError as exc:
-        assert exc.inspect_node is not None
+        assert exc.inspect_node is not None  # noqa: PT017
         _attach_buffer_tree(exc.inspect_node, stream.getbuffer())
         raise
     buffer = stream.getbuffer()
@@ -90,7 +90,7 @@ def decode_inspect[T](
     try:
         result, tree = _decode_stream_impl(stream, fmt, shape=shape, inspect=True)
     except DecodeError as exc:
-        assert exc.inspect_node is not None
+        assert exc.inspect_node is not None  # noqa: PT017
         _attach_buffer_tree(exc.inspect_node, stream.getbuffer())
         raise
     _attach_buffer_tree(tree, stream.getbuffer())

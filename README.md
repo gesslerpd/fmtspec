@@ -1,13 +1,9 @@
 
 # fmtspec
 
-`fmtspec` is a binary serialization library for Python built around small, composable format objects.
+`fmtspec` is a Python library for binary encoding and decoding built around composable format objects.
 
-It is designed for protocol work where you want three things at once:
-
-- declarative format definitions for bytes, strings, arrays, tagged payloads, and nested records
-- a short top-level API for encoding and decoding buffers or streams
-- enough low-level control to implement custom binary types without dropping into private internals
+The only dependency is the excellent [msgspec](https://jcristharif.com/msgspec/) package.
 
 ## Installation
 
@@ -15,13 +11,14 @@ It is designed for protocol work where you want three things at once:
 pip install fmtspec
 ```
 
-## What You Get
+## Core Features
 
-- `encode(...)` and `decode(...)` for one-shot byte buffers
+- `encode(...)` and `decode(...)` for in-memory byte buffers
 - `encode_stream(...)` and `decode_stream(...)` for files, sockets, and `BytesIO`
-- `fmtspec.types` for reusable building blocks such as integers, arrays, length-prefixed fields, bitfields, and tagged payload helpers
-- `encode_inspect(...)`, `decode_inspect(...)`, and `format_tree(...)` for parse-tree inspection and debugging
-- `Context` and `fmtspec.stream` helpers for writing custom `Type` implementations
+- `fmtspec.types` for reusable primitives such as integers, enums, arrays, sized fields, bitfields, and tagged layouts
+- `encode_inspect(...)`, `decode_inspect(...)`, and `format_tree(...)` for inspecting parse trees during encoding and decoding
+- Informative exceptions with failure paths and format context
+- `Context` and `fmtspec.stream` for implementing custom `Type` classes on the public API
 
 ## Typical Workflow
 
@@ -51,7 +48,7 @@ decoded = decode(data, packet_fmt)
 assert decoded == packet
 ```
 
-That is the core style of fmtspec: combine primitive format objects into mappings, tuples, or arrays, then round-trip ordinary Python values.
+This is the core fmtspec style: combine primitive format objects into mappings, tuples, or arrays, then round-trip ordinary Python values.
 
 ### Derive the Format From a Typed Shape
 
@@ -79,7 +76,7 @@ roundtripped = decode(data, shape=Record)
 assert roundtripped == record
 ```
 
-This is the most ergonomic path when your wire layout already matches a dataclass or `msgspec.Struct` model.
+This is the most ergonomic path when your wire layout already matches a dataclass or `msgspec.Struct`.
 
 ### Reject Trailing Bytes When You Need Full Consumption
 
@@ -94,7 +91,7 @@ except DecodeError:
     pass
 ```
 
-Use `strict=True` on `decode(...)` when extra bytes should be treated as a protocol error instead of silently ignored.
+Use `strict=True` on `decode(...)` when extra bytes should be treated as a protocol error instead of being silently ignored.
 
 ### Inspect Layouts While Debugging
 
@@ -111,9 +108,9 @@ print(data)
 print(format_tree(tree))
 ```
 
-Inspection gives you offsets, sizes, values, and child structure for each step of an encode or decode. It is intended for debugging, tooling, and protocol exploration rather than hot paths.
+Inspection shows offsets, sizes, values, and child structure for each encoding or decoding step. It is intended for debugging, tooling, and protocol exploration rather than performance.
 
-For the example above, `format_tree(tree)` renders output in this shape:
+For the example above, `format_tree(tree)` renders output like this:
 
 ```text
 * Mapping @ [0:3] (3 bytes) (2 items)
@@ -125,22 +122,13 @@ For the example above, `format_tree(tree)` renders output in this shape:
      data: 02 03
 ```
 
-## Feature Map
-
-- Primitive types: fixed-width ints and floats, greedy or fixed-width bytes and strings
-- Boundaries and framing: `Sized(...)`, `TakeUntil(...)`, `Literal(...)`, `Null()`
-- Collections: `Array(...)` and `array(...)` for fixed, prefixed, sibling-sized, or greedy arrays
-- Dynamic layouts: `Ref(...)`, `Switch(...)`, `TaggedUnion(...)`, `Lazy(...)`, `Optional(...)`
-- Packed values: `Bitfield(...)` and `Bitfields(...)`
-- Custom extensions: write your own `Type` with `Context` and `fmtspec.stream`
-
 ## Error Model
 
-The public API raises structured exceptions instead of only raw `ValueError`s.
+The public API raises structured exceptions instead of only raw `ValueError` instances.
 
 - `EncodeError`: a Python value could not be serialized with the chosen format
 - `DecodeError`: the incoming bytes did not match the format
-- `ShapeError`: binary decoding succeeded, but the result could not be converted into the requested `shape`
+- `ShapeError`: decoding succeeded, but the result could not be converted into the requested `shape`
 
 These exceptions preserve context such as the active format, object, path, cause, and optional inspection node.
 
@@ -160,11 +148,11 @@ except DecodeError as exc:
     print(exc.fmt)
 ```
 
-That context becomes especially useful with nested mappings, arrays, `Switch(...)`, and custom types where the failing field path matters as much as the raw message. The deeper error and inspection details are in [docs/core-api.md](docs/core-api.md).
+This context is especially useful with nested mappings, arrays, `Switch(...)`, and custom types, where the failing field path matters as much as the raw message. See [docs/core-api.md](docs/core-api.md) for more detail on errors and inspection.
 
 ## Documentation
 
-These reference pages go deeper by topic:
+These reference pages cover the details by topic:
 
 - [docs/core-api.md](docs/core-api.md) for top-level encode/decode, format derivation, inspection, and errors
 - [docs/types-api.md](docs/types-api.md) for `fmtspec.types`
