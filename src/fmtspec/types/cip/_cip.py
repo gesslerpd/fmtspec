@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 import msgspec
 
 from ..._protocol import Type  # noqa: TC001 (fails in msgspec if not truly imported)
-from ..._stream import peek
+from ...stream import peek
 from .._array import array
 from .._bitfield import Bitfield, Bitfields
 from .._int import Int, u8le, u16le, u32le, u64le

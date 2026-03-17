@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections import deque
 from collections.abc import Iterable, Mapping
 from types import EllipsisType
@@ -62,6 +63,8 @@ class InspectNode(Struct, kw_only=True, gc=False):
         )
 
 
+# FUTURE: consider allowing mutable data/value properties on InspectNode
+# this causes a large nested binary backed and value sync issue.
 # class ViewNode(Struct, kw_only=True, gc=False):
 #     key: str | int | None
 #     buffer: memoryview
@@ -97,6 +100,42 @@ class InspectNode(Struct, kw_only=True, gc=False):
 #         stream = BytesIO()
 #         encode_stream(value, stream, self.fmt)
 #         self.buffer[:] = stream.getbuffer()
+
+
+NULL_CTX = contextlib.nullcontext()
+
+
+@contextlib.contextmanager
+def _inspect_scope_inner(
+    stream: BinaryIO,
+    context: Context,
+    key,
+    fmt,
+    value,
+    /,
+):
+    parent_children = context.inspect_children
+    children: deque[InspectNode] = deque()
+
+    start_offset = stream.tell()
+    node = InspectNode(
+        key=key,
+        fmt=fmt,
+        value=value,
+        offset=start_offset,
+        children=children,
+    )
+
+    context.inspect_children = children
+
+    yield node
+
+    end_offset = stream.tell()
+    node.size = end_offset - start_offset
+
+    context.inspect_children = parent_children
+    if parent_children is not None:
+        parent_children.append(node)
 
 
 # FUTURE: remove gc=False optimization, lower risk for this
@@ -135,6 +174,85 @@ class Context(Struct, gc=False):
 
     def pop_path(self) -> None:
         self.path.pop()
+
+    def inspect_leaf(
+        self,
+        stream: BinaryIO,
+        key: str | int | None,
+        fmt: Format,
+        value: Any,
+        start: int,
+        *,
+        prepend: bool = False,
+    ) -> None:
+        """Create a leaf InspectNode and append it to the current children list.
+
+        Useful when a Type manually calls ``fmt.encode()`` / ``fmt.decode()``
+        (bypassing ``_encode_stream`` / ``_decode_stream``) but still needs an
+        inspection entry.  No-op when inspection is disabled.
+
+        Args:
+            stream: The binary stream being read/written.
+            context: Serialization context with inspect state.
+            key: Field name, index, or descriptive key for the node.
+            fmt: The format specification used.
+            value: The Python value encoded/decoded.
+            start: Stream offset *before* the encode/decode call.
+            prepend: If True, insert at position 0 instead of appending.
+        """
+        if not self.inspect:
+            return
+        size = stream.tell() - start
+        node = InspectNode(
+            key=key,
+            fmt=fmt,
+            value=value,
+            offset=start,
+            size=size,
+        )
+        if prepend:
+            self.inspect_children.appendleft(node)
+        else:
+            self.inspect_children.append(node)
+
+    def inspect_scope(
+        self,
+        stream: BinaryIO,
+        key,
+        fmt,
+        value,
+        /,
+    ):
+        """Full-featured context manager for InspectNode lifecycle management.
+
+        Fast no-op when context.inspect is False. Handles:
+        - Node creation with data/size population
+        - Children scope management (context.inspect_children)
+        - Auto-append to parent's children list
+        - Optional root node tracking (context.inspect_node)
+
+        The yielded node's `value` attribute can be updated after creation,
+        useful for decode operations where the value isn't known upfront.
+
+        Args:
+            stream: The binary stream being read/written.
+            context: Serialization context with inspect state.
+            key: Field name, index, or None for root nodes.
+            fmt: The format specification for this node.
+            value: Initial value (can be None, updated via node.value later).
+            track_root: If True and context.inspect_node is None, sets it to this node.
+
+        Usage (Type classes - intermediate nodes):
+            with _inspect_scope(stream, context, i, self, value) as node:
+                # recursive encode/decode...
+                if node:
+                    node.value = decoded_result
+
+        """
+        # perf: fast no-op when inspection is disabled
+        if self.inspect:
+            return _inspect_scope_inner(stream, self, key, fmt, value)
+        return NULL_CTX
 
 
 class Type(Protocol):

@@ -3,7 +3,7 @@ from enum import IntEnum, IntFlag
 from struct import Struct
 from typing import Any, BinaryIO, Literal
 
-from .._stream import read_exactly, write_all
+from ..stream import read_exactly, write_all
 
 SIZE_MAP = {
     1: "B",

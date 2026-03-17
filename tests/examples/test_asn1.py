@@ -18,9 +18,17 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from fmtspec import decode, decode_inspect, encode, encode_inspect, format_tree, types
-from fmtspec._protocol import Context, InspectNode
-from fmtspec._stream import _inspect_leaf, _inspect_scope, peek, read_exactly, write_all
+from fmtspec import (
+    Context,
+    InspectNode,
+    decode,
+    decode_inspect,
+    encode,
+    encode_inspect,
+    format_tree,
+    types,
+)
+from fmtspec.stream import peek, read_exactly, write_all
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -323,7 +331,7 @@ class ASN1:
         # create a new context to avoid mutating the parent context inspect_node
         child_context = Context(inspect=context.inspect)
         for i, item in enumerate(items):
-            with _inspect_scope(buf, child_context, i, self, item):
+            with child_context.inspect_scope(buf, i, self, item):
                 self.encode(item, buf, context=child_context)
 
         return buf.getvalue(), child_context.inspect_children
@@ -334,10 +342,10 @@ class ASN1:
             if peek(stream, 2) == b"\x00\x00":
                 eoc_start = stream.tell()
                 eoc_marker = read_exactly(stream, 2)
-                _inspect_leaf(stream, context, "--eoc--", types.Bytes(2), eoc_marker, eoc_start)
+                context.inspect_leaf(stream, "--eoc--", types.Bytes(2), eoc_marker, eoc_start)
                 return
 
-            with _inspect_scope(stream, context, i, self, None) as node:
+            with context.inspect_scope(stream, i, self, None) as node:
                 item = self.decode(stream, context=context)
                 if node:
                     node.value = item
@@ -350,7 +358,7 @@ class ASN1:
         end = stream.tell() + length
 
         while stream.tell() < end:
-            with _inspect_scope(stream, context, i, self, None) as node:
+            with context.inspect_scope(stream, i, self, None) as node:
                 item = self.decode(stream, context=context)
                 if node:
                     node.value = item
@@ -382,28 +390,28 @@ class ASN1:
         tag_start = stream.tell()
         tag_tuple = (tag_class, tag, constructed)
         ASN1_TAG.encode(tag_tuple, stream, context=context)
-        _inspect_leaf(stream, context, "tag", ASN1_TAG, tag_tuple, tag_start)
+        context.inspect_leaf(stream, "tag", ASN1_TAG, tag_tuple, tag_start)
 
         length_start = stream.tell()
         ASN1_LENGTH.encode(len(body), stream, context=context)
-        _inspect_leaf(stream, context, "--len--", ASN1_LENGTH, len(body), length_start)
+        context.inspect_leaf(stream, "--len--", ASN1_LENGTH, len(body), length_start)
 
         write_all(stream, body)
         if body_nodes:
             context.inspect_children.extend(body_nodes)
         else:
             body_start = stream.tell() - len(body)
-            _inspect_leaf(stream, context, "value", types.Bytes(len(body)), inner_value, body_start)
+            context.inspect_leaf(stream, "value", types.Bytes(len(body)), inner_value, body_start)
 
     def decode(self, stream, *, context: Context) -> ASN1Node:
         tag_start = stream.tell()
         tag_tuple = ASN1_TAG.decode(stream, context=context)
         tag_class, tag, constructed = tag_tuple
-        _inspect_leaf(stream, context, "tag", ASN1_TAG, tag_tuple, tag_start)
+        context.inspect_leaf(stream, "tag", ASN1_TAG, tag_tuple, tag_start)
 
         length_start = stream.tell()
         length = ASN1_LENGTH.decode(stream, context=context)
-        _inspect_leaf(stream, context, "--len--", ASN1_LENGTH, length, length_start)
+        context.inspect_leaf(stream, "--len--", ASN1_LENGTH, length, length_start)
 
         if constructed:
             if length is None:
@@ -419,7 +427,7 @@ class ASN1:
                 value = _decode_universal_primitive(tag, body)
             else:
                 value = body
-            _inspect_leaf(stream, context, "value", types.Bytes(length), value, body_start)
+            context.inspect_leaf(stream, "value", types.Bytes(length), value, body_start)
 
         return {
             "tag_class": tag_class,

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from fmtspec import decode_stream, encode_stream, types
-from fmtspec._stream import peek, read_exactly, write_all
+from fmtspec.stream import peek, read_exactly, write_all
 
 
 def test_roundtrip():

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._stream import _decode_stream, _encode_stream, _inspect_leaf, read_exactly, write_all
+from ..stream import decode_stream, encode_stream, read_exactly, write_all
 from ._ref import Ref
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class Sized:
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
         buf = BytesIO()
-        _encode_stream(value, self.fmt, buf, context=context)
+        encode_stream(value, self.fmt, buf, context=context)
         encoded = buf.getvalue()
         n = len(encoded)
 
@@ -91,7 +91,14 @@ class Sized:
         length_value = n // self.factor
         start = stream.tell()
         self.length.encode(length_value, stream, context=context)
-        _inspect_leaf(stream, context, "--size--", self.length, length_value, start, prepend=True)
+        context.inspect_leaf(
+            stream,
+            "--size--",
+            self.length,
+            length_value,
+            start,
+            prepend=True,
+        )
         write_all(stream, encoded)
         pad = self._pad_len(n)
         if pad:
@@ -105,13 +112,13 @@ class Sized:
             if pad_len:
                 padding = read_exactly(stream, pad_len)
                 self._check_padding(padding, pad_len)
-            return _decode_stream(BytesIO(data), self.fmt, context=context)[0]
+            return decode_stream(BytesIO(data), self.fmt, context=context)
 
         if isinstance(self.length, int):
             length = self.length
             data = read_exactly(stream, length)
             inner_stream = BytesIO(data)
-            inner = _decode_stream(inner_stream, self.fmt, context=context)[0]
+            inner = decode_stream(inner_stream, self.fmt, context=context)
             remaining = inner_stream.read()
             if remaining:
                 self._check_padding(remaining, len(remaining))
@@ -120,11 +127,11 @@ class Sized:
         # length is a format: decode it from stream, then read that many bytes
         start = stream.tell()
         length_value = self.length.decode(stream, context=context)
-        _inspect_leaf(stream, context, "--size--", self.length, length_value, start)
+        context.inspect_leaf(stream, "--size--", self.length, length_value, start)
         length = length_value * self.factor
         data = read_exactly(stream, length)
         pad_len = self._pad_len(length)
         if pad_len:
             padding = read_exactly(stream, pad_len)
             self._check_padding(padding, pad_len)
-        return _decode_stream(BytesIO(data), self.fmt, context=context)[0]
+        return decode_stream(BytesIO(data), self.fmt, context=context)

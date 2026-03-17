@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import contextlib
-from collections import deque
-from collections.abc import Buffer, Iterable, Mapping
-from io import SEEK_CUR, BytesIO
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from ._protocol import Context, Format, InspectNode
@@ -14,71 +11,6 @@ from ._protocol import Context, Format, InspectNode
 
 if TYPE_CHECKING:
     from .types import Bitfields
-
-
-# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def peek(stream: BinaryIO, size: int, /) -> bytes:
-    """Peek exactly ``size`` bytes from ``stream`` without advancing the position."""
-    data = read_exactly(stream, size)
-    stream.seek(-size, SEEK_CUR)
-    return data
-
-
-# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def read_exactly(stream: BinaryIO, size: int, /) -> bytes:
-    """Read exactly ``size`` bytes from ``stream`` or raise ``EOFError``."""
-    # perf: fast path for BytesIO
-    if type(stream) is BytesIO:
-        data = stream.read(size)
-        data_size = len(data)
-        if data_size != size:
-            raise EOFError(f"Expected {size} bytes, got {data_size}")
-        return data
-
-    # perf: pre-allocate and fill via readinto to avoid per-chunk allocations
-    out = bytearray(size)
-    mv = memoryview(out)
-    try:
-        n = 0
-        readinto = getattr(stream, "readinto", None)
-        if readinto is not None:
-            while n < size:
-                got = readinto(mv[n:])
-                if not got:
-                    raise EOFError(f"Expected {size} bytes, got {n}")
-                n += got
-        else:
-            read = stream.read
-            while n < size:
-                chunk = read(size - n)
-                if not chunk:
-                    raise EOFError(f"Expected {size} bytes, got {n}")
-                chunk_size = len(chunk)
-                n_next = n + chunk_size
-                mv[n:n_next] = chunk
-                n = n_next
-    finally:
-        mv.release()
-    return out
-
-
-# perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def write_all(stream: BinaryIO, data: Buffer, /) -> None:
-    """Write all bytes from ``data`` to ``stream`` or raise ``EOFError``."""
-    # perf: fast path for BytesIO
-    if type(stream) is BytesIO:
-        stream.write(data)
-        return
-    total = len(data)
-    write = stream.write
-    n = write(data)
-    if n < total:
-        # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
-        mv = memoryview(data)
-        while n < total:
-            written = write(mv[n:])
-            n += written
-        mv.release()  # not required but explicitly release memoryview
 
 
 def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
@@ -138,123 +70,6 @@ def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
     return groups
 
 
-def _inspect_leaf(
-    stream: BinaryIO,
-    context: Context,
-    key: str | int | None,
-    fmt: Format,
-    value: Any,
-    start: int,
-    *,
-    prepend: bool = False,
-) -> None:
-    """Create a leaf InspectNode and append it to the current children list.
-
-    Useful when a Type manually calls ``fmt.encode()`` / ``fmt.decode()``
-    (bypassing ``_encode_stream`` / ``_decode_stream``) but still needs an
-    inspection entry.  No-op when inspection is disabled.
-
-    Args:
-        stream: The binary stream being read/written.
-        context: Serialization context with inspect state.
-        key: Field name, index, or descriptive key for the node.
-        fmt: The format specification used.
-        value: The Python value encoded/decoded.
-        start: Stream offset *before* the encode/decode call.
-        prepend: If True, insert at position 0 instead of appending.
-    """
-    if not context.inspect:
-        return
-    size = stream.tell() - start
-    node = InspectNode(
-        key=key,
-        fmt=fmt,
-        value=value,
-        offset=start,
-        size=size,
-    )
-    if prepend:
-        context.inspect_children.appendleft(node)
-    else:
-        context.inspect_children.append(node)
-
-
-NULL_CTX = contextlib.nullcontext()
-
-
-@contextlib.contextmanager
-def _inspect_scope_inner(
-    stream: BinaryIO,
-    context: Context,
-    key,
-    fmt,
-    value,
-    /,
-):
-    parent_children = context.inspect_children
-    children: deque[InspectNode] = deque()
-
-    start_offset = stream.tell()
-    node = InspectNode(
-        key=key,
-        fmt=fmt,
-        value=value,
-        offset=start_offset,
-        children=children,
-    )
-
-    context.inspect_children = children
-
-    yield node
-
-    end_offset = stream.tell()
-    node.size = end_offset - start_offset
-
-    context.inspect_children = parent_children
-    if parent_children is not None:
-        parent_children.append(node)
-
-
-def _inspect_scope(
-    stream: BinaryIO,
-    context: Context,
-    key,
-    fmt,
-    value,
-    /,
-):
-    """Full-featured context manager for InspectNode lifecycle management.
-
-    Fast no-op when context.inspect is False. Handles:
-    - Node creation with data/size population
-    - Children scope management (context.inspect_children)
-    - Auto-append to parent's children list
-    - Optional root node tracking (context.inspect_node)
-
-    The yielded node's `value` attribute can be updated after creation,
-    useful for decode operations where the value isn't known upfront.
-
-    Args:
-        stream: The binary stream being read/written.
-        context: Serialization context with inspect state.
-        key: Field name, index, or None for root nodes.
-        fmt: The format specification for this node.
-        value: Initial value (can be None, updated via node.value later).
-        track_root: If True and context.inspect_node is None, sets it to this node.
-
-    Usage (Type classes - intermediate nodes):
-        with _inspect_scope(stream, context, i, self, value) as node:
-            # recursive encode/decode...
-            if node:
-                node.value = decoded_result
-
-    """
-    # perf: fast no-op when inspection is disabled
-    if context.inspect:
-        return _inspect_scope_inner(stream, context, key, fmt, value)
-    return NULL_CTX
-
-
 # FUTURE: what should this be? use a sentinel object?
 # None is used for root but could be reused as default key
 # format_tree knows what the root is
@@ -272,7 +87,7 @@ def _encode_stream(
     """Encode object to stream, optionally returning inspection node."""
     context.fmt = fmt
 
-    with _inspect_scope(stream, context, key, fmt, obj) as node:
+    with context.inspect_scope(stream, key, fmt, obj) as node:
         if context.inspect and not context.inspect_node:
             # track root node if not already set
             context.inspect_node = node
@@ -351,7 +166,7 @@ def _decode_stream(  # noqa: PLR0912
     """Decode object from stream, optionally returning inspection node."""
     context.fmt = fmt
 
-    with _inspect_scope(stream, context, key, fmt, None) as node:
+    with context.inspect_scope(stream, key, fmt, None) as node:
         if context.inspect and not context.inspect_node:
             # track root node if not already set
             context.inspect_node = node

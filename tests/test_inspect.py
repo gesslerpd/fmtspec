@@ -1,5 +1,6 @@
 """Tests for inspection functionality."""
 
+from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
 from typing import BinaryIO
@@ -231,7 +232,7 @@ class TestFormatNode:
             value=1,
             offset=0,
             size=1,
-            children=[],
+            children=deque(),
             buffer=buffer,
         )
         r = repr(node)
@@ -248,7 +249,7 @@ class TestFormatNode:
             value=1,
             offset=0,
             size=1,
-            children=[],
+            children=deque(),
             buffer=buffer,
         )
         parent = fmtspec.InspectNode(
@@ -257,7 +258,7 @@ class TestFormatNode:
             value={"child": 1},
             offset=0,
             size=1,
-            children=[child],
+            children=deque((child,)),
             buffer=buffer,
         )
         r = repr(parent)
@@ -270,7 +271,7 @@ class TestFormatNode:
             value=1,
             offset=0,
             size=1,
-            children=[],
+            children=deque(),
         )
 
         with pytest.raises(RuntimeError, match="buffer is not attached"):
@@ -360,6 +361,90 @@ class TestInspectNodeViews:
 
     #     assert payload.data == b"\x0a\x0b"
     #     assert payload.value == 0x0A0B
+
+
+class TestContextInspectHelpers:
+    """Tests for public Context inspection helpers."""
+
+    def test_inspect_leaf_noop_when_disabled(self):
+        context = fmtspec.Context()
+        stream = BytesIO()
+
+        stream.write(b"\x01")
+        context.inspect_leaf(
+            stream,
+            "field",
+            types.Int(byteorder="big", signed=False, size=1),
+            1,
+            0,
+        )
+
+        assert not context.inspect_children
+
+    def test_inspect_leaf_prepend(self):
+        context = fmtspec.Context(inspect=True)
+        stream = BytesIO()
+        fmt = types.Int(byteorder="big", signed=False, size=1)
+
+        stream.write(b"\x01")
+        context.inspect_leaf(stream, "value", fmt, 1, 0)
+
+        start = stream.tell()
+        stream.write(b"\x02")
+        context.inspect_leaf(stream, "--prefix--", fmt, 2, start, prepend=True)
+
+        assert [child.key for child in context.inspect_children] == ["--prefix--", "value"]
+
+    def test_inspect_scope_restores_parent_children(self):
+        context = fmtspec.Context(inspect=True)
+        stream = BytesIO()
+
+        with context.inspect_scope(stream, "payload", types.Bytes(2), None) as node:
+            stream.write(b"\x01")
+            context.inspect_leaf(
+                stream, "tag", types.Int(byteorder="big", signed=False, size=1), 1, 0
+            )
+            stream.write(b"\x02")
+            if node:
+                node.value = b"\x01\x02"
+
+        assert len(context.inspect_children) == 1
+        payload = context.inspect_children[0]
+        assert payload.key == "payload"
+        assert payload.size == 2
+        assert payload.value == b"\x01\x02"
+        assert [child.key for child in payload.children] == ["tag"]
+
+    def test_inspect_scope_nests_child_nodes(self):
+        context = fmtspec.Context(inspect=True)
+        stream = BytesIO()
+
+        with context.inspect_scope(stream, "outer", types.Bytes(2), None) as outer:
+            stream.write(b"\x01")
+            with context.inspect_scope(stream, "inner", types.Bytes(1), None) as inner:
+                stream.write(b"\x02")
+                if inner:
+                    inner.value = 2
+            if outer:
+                outer.value = [2]
+
+        outer_node = context.inspect_children[0]
+        inner_node = outer_node.children[0]
+
+        assert outer_node.key == "outer"
+        assert outer_node.value == [2]
+        assert inner_node.key == "inner"
+        assert inner_node.value == 2
+
+    def test_inspect_scope_noop_when_disabled(self):
+        context = fmtspec.Context()
+        stream = BytesIO()
+
+        with context.inspect_scope(stream, "payload", types.Bytes(1), None) as node:
+            stream.write(b"\x01")
+            assert node is None
+
+        assert not context.inspect_children
 
 
 class TestRoundtrip:

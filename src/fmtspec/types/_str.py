@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, BinaryIO
 
-from .._stream import read_exactly, write_all
+from ..stream import read_exactly, write_all
 
 
 @dataclass(frozen=True, slots=True)

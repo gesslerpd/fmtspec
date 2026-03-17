@@ -4,7 +4,7 @@ import struct
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Literal
 
-from .._stream import read_exactly, write_all
+from ..stream import read_exactly, write_all
 
 # Float size constants
 FLOAT32_SIZE = 4

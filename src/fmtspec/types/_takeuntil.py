@@ -4,7 +4,7 @@ from types import EllipsisType
 from typing import Any, BinaryIO, ClassVar
 
 from .._protocol import Type
-from .._stream import write_all
+from ..stream import write_all
 
 
 @dataclass(frozen=True, slots=True)

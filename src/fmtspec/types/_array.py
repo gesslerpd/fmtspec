@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._stream import _decode_stream, _encode_stream, _inspect_scope
+from .._stream import _decode_stream, _encode_stream
 from .._utils import sizeof
 from ._float import Float
 from ._int import Int
@@ -266,7 +266,7 @@ class Array:
             # Non-leaf level: create intermediate nodes for each sub-array
             for i, sub in enumerate(v):
                 context.push_path(i)
-                with _inspect_scope(stream, context, i, self, sub):
+                with context.inspect_scope(stream, i, self, sub):
                     self._encode_level(stream, sub, idx + 1, context)
                 context.pop_path()
 
@@ -340,7 +340,7 @@ class Array:
             result = []
             for i in range(count):
                 context.push_path(i)
-                with _inspect_scope(stream, context, i, self, None) as node:
+                with context.inspect_scope(stream, i, self, None) as node:
                     sub_result = self._decode_level(stream, idx + 1, context)
                     if node:
                         node.value = sub_result

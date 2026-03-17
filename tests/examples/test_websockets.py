@@ -26,7 +26,7 @@ from fmtspec import (
     format_tree,
     types,
 )
-from fmtspec._stream import _decode_stream, _encode_stream
+from fmtspec.stream import decode_stream, encode_stream
 
 if TYPE_CHECKING:
     from types import EllipsisType
@@ -73,12 +73,12 @@ def _payload_fmt(*, is_text: bool, size: int):
 def _encode_payload(payload: Any, stream, *, is_text: bool, context, key: str) -> None:
     size = _payload_wire_length(payload, is_text=is_text)
     payload_fmt = _payload_fmt(is_text=is_text, size=size)
-    _encode_stream(payload, payload_fmt, stream, context=context, key=key)
+    encode_stream(payload, payload_fmt, stream, context=context, key=key)
 
 
 def _decode_payload(stream, *, is_text: bool, size: int, context, key: str) -> str | bytes:
     payload_fmt = _payload_fmt(is_text=is_text, size=size)
-    return _decode_stream(stream, payload_fmt, context=context, key=key)[0]
+    return decode_stream(stream, payload_fmt, context=context, key=key)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,38 +113,36 @@ class FrameHeader:
         }
 
         context.push_path("flags")
-        _encode_stream(flags, FRAME_HEADER_FLAGS_FMT, stream, context=context, key="flags")
+        encode_stream(flags, FRAME_HEADER_FLAGS_FMT, stream, context=context, key="flags")
         context.pop_path()
 
         context.push_path("length")
-        _encode_stream(length_info, FRAME_HEADER_LENGTH_FMT, stream, context=context, key="length")
+        encode_stream(length_info, FRAME_HEADER_LENGTH_FMT, stream, context=context, key="length")
         context.pop_path()
 
         if extended_key == "len_payload_extended_1":
             context.push_path(extended_key)
-            _encode_stream(payload_len, types.u16, stream, context=context, key=extended_key)
+            encode_stream(payload_len, types.u16, stream, context=context, key=extended_key)
             context.pop_path()
         elif extended_key == "len_payload_extended_2":
             context.push_path(extended_key)
-            _encode_stream(payload_len, types.u32, stream, context=context, key=extended_key)
+            encode_stream(payload_len, types.u32, stream, context=context, key=extended_key)
             context.pop_path()
 
         if is_masked:
             if "mask_key" not in value:
                 raise ValueError("Masked frames require mask_key")
             context.push_path("mask_key")
-            _encode_stream(value["mask_key"], types.u32, stream, context=context, key="mask_key")
+            encode_stream(value["mask_key"], types.u32, stream, context=context, key="mask_key")
             context.pop_path()
 
     def decode(self, stream, *, context) -> dict[str, Any]:
         context.push_path("flags")
-        flags = _decode_stream(stream, FRAME_HEADER_FLAGS_FMT, context=context, key="flags")[0]
+        flags = decode_stream(stream, FRAME_HEADER_FLAGS_FMT, context=context, key="flags")
         context.pop_path()
 
         context.push_path("length")
-        length_info = _decode_stream(
-            stream, FRAME_HEADER_LENGTH_FMT, context=context, key="length"
-        )[0]
+        length_info = decode_stream(stream, FRAME_HEADER_LENGTH_FMT, context=context, key="length")
         context.pop_path()
 
         payload_len_primary = length_info["len_payload_primary"]
@@ -160,26 +158,24 @@ class FrameHeader:
             payload_len = payload_len_primary
         elif payload_len_primary == 126:
             context.push_path("len_payload_extended_1")
-            extended = _decode_stream(
+            extended = decode_stream(
                 stream, types.u16, context=context, key="len_payload_extended_1"
-            )[0]
+            )
             context.pop_path()
             header["len_payload_extended_1"] = extended
             payload_len = extended
         else:
             context.push_path("len_payload_extended_2")
-            extended = _decode_stream(
+            extended = decode_stream(
                 stream, types.u32, context=context, key="len_payload_extended_2"
-            )[0]
+            )
             context.pop_path()
             header["len_payload_extended_2"] = extended
             payload_len = extended
 
         if header["is_masked"]:
             context.push_path("mask_key")
-            header["mask_key"] = _decode_stream(stream, types.u32, context=context, key="mask_key")[
-                0
-            ]
+            header["mask_key"] = decode_stream(stream, types.u32, context=context, key="mask_key")
             context.pop_path()
 
         header["len_payload"] = payload_len
@@ -201,7 +197,7 @@ class InitialFrame:
         payload = value[payload_key]
         header["len_payload"] = _payload_wire_length(payload, is_text=is_text)
         context.push_path("header")
-        _encode_stream(header, self.header_fmt, stream, context=context, key="header")
+        encode_stream(header, self.header_fmt, stream, context=context, key="header")
         context.pop_path()
 
         context.push_path(payload_key)
@@ -210,7 +206,7 @@ class InitialFrame:
 
     def decode(self, stream, *, context) -> dict[str, Any]:
         context.push_path("header")
-        header = _decode_stream(stream, self.header_fmt, context=context, key="header")[0]
+        header = decode_stream(stream, self.header_fmt, context=context, key="header")
         context.pop_path()
 
         is_text = header["opcode"] == Opcode.TEXT
@@ -245,7 +241,7 @@ class DataFrame:
         payload = value[payload_key]
         header["len_payload"] = _payload_wire_length(payload, is_text=self.text_mode)
         context.push_path("header")
-        _encode_stream(header, self.header_fmt, stream, context=context, key="header")
+        encode_stream(header, self.header_fmt, stream, context=context, key="header")
         context.pop_path()
 
         context.push_path(payload_key)
@@ -254,7 +250,7 @@ class DataFrame:
 
     def decode(self, stream, *, context) -> dict[str, Any]:
         context.push_path("header")
-        header = _decode_stream(stream, self.header_fmt, context=context, key="header")[0]
+        header = decode_stream(stream, self.header_fmt, context=context, key="header")
         context.pop_path()
 
         payload_key = "payload" if self.text_mode else "payload"
@@ -283,7 +279,7 @@ class WebSocket:
         trailing_frames = value.get("trailing_frames", [])
 
         context.push_path("initial_frame")
-        _encode_stream(
+        encode_stream(
             initial_frame, self.initial_frame_fmt, stream, context=context, key="initial_frame"
         )
         context.pop_path()
@@ -303,7 +299,7 @@ class WebSocket:
         trailing_frames_fmt = types.array(trailing_fmt)
 
         context.push_path("trailing_frames")
-        _encode_stream(
+        encode_stream(
             trailing_frames, trailing_frames_fmt, stream, context=context, key="trailing_frames"
         )
         context.pop_path()
@@ -316,12 +312,12 @@ class WebSocket:
             "initial_frame": None,
         }
         context.push_path("initial_frame")
-        result["initial_frame"] = _decode_stream(
+        result["initial_frame"] = decode_stream(
             stream,
             self.initial_frame_fmt,
             context=context,
             key="initial_frame",
-        )[0]
+        )
         context.pop_path()
 
         initial_header = result["initial_frame"]["header"]
@@ -332,9 +328,9 @@ class WebSocket:
         trailing_fmt = DataFrame(text_mode=text_mode)
         trailing_frames_fmt = types.array(trailing_fmt)
         # context.push_path("trailing_frames")
-        result["trailing_frames"] = _decode_stream(
+        result["trailing_frames"] = decode_stream(
             stream, trailing_frames_fmt, context=context, key="trailing_frames"
-        )[0]
+        )
         # context.pop_path()
         return result
 
