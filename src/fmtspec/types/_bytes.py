@@ -1,4 +1,4 @@
-"""Byte array types for binary serialization."""
+"""Byte-array format helpers."""
 
 from dataclasses import dataclass
 from typing import Any, BinaryIO

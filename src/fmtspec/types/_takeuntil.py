@@ -9,10 +9,15 @@ from ..stream import write_all
 
 @dataclass(frozen=True, slots=True)
 class TakeUntil:
-    """Generic take-until format: either terminated by bytes or length-prefixed.
+    """Read or write values terminated by a sentinel byte sequence.
 
-    Exactly one of `terminator` or `max_size` must be provided.
-    Returns `str` by default (decoded with `encoding`) unless `as_bytes` is True.
+    The wrapped ``fmt`` is applied to the bytes before the terminator.
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> fmt = types.TakeUntil(types.str_utf8, b"\0")
+        >>> decode(encode("ok", fmt), fmt)
+        'ok'
     """
 
     # dynamic size
@@ -25,11 +30,11 @@ class TakeUntil:
         if not self.terminator:
             raise ValueError("terminator must not be empty")
 
-    def encode(self, value: bytes, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:
         self.fmt.encode(value, stream, **_)
         write_all(stream, self.terminator)
 
-    def decode(self, stream: BinaryIO, **_: Any) -> str | bytes:
+    def decode(self, stream: BinaryIO, **_: Any) -> Any:
         term = self.terminator
         term_len = len(term)
         max_size = float("inf") if self.max_size is None else self.max_size

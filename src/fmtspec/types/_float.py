@@ -13,7 +13,7 @@ FLOAT64_SIZE = 8
 
 @dataclass(frozen=True, slots=True)
 class Float:
-    """IEEE 754 floating point type."""
+    """Fixed-width IEEE 754 floating-point format."""
 
     # can use `sys.byteorder` for native byte order
     byteorder: Literal["little", "big"]

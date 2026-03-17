@@ -40,11 +40,20 @@ def _get_struct_tag_info(tp: type) -> tuple[Any, str] | None:
 
 @dataclass(frozen=True, slots=True)
 class Switch:
-    """Conditional or tag-based format selection.
+    """Select a format from sibling context.
 
-    Key-mode (existing behaviour): provide `key` and `cases` to select a
-    `Format` based on a sibling field in the `context`.
+    ``Switch`` is the main building block for tagged payloads where another
+    field in the current parent object determines how the current field should
+    be encoded or decoded.
 
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> fmt = {
+        ...     "kind": types.u8,
+        ...     "body": types.Switch(types.Ref("kind"), {1: types.u16}, default=types.bytes_),
+        ... }
+        >>> decode(encode({"kind": 1, "body": 5}, fmt), fmt)["body"]
+        5
     """
 
     size: ClassVar[EllipsisType] = ...
@@ -65,12 +74,6 @@ class Switch:
         _encode_stream(value, fmt, stream, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
-        """Decode using either key-mode or tag-mode dispatch.
-
-        Key-mode preserves existing semantics where the body is length-prefixed
-        and decoded via the selected `Format` (or returned as raw bytes if
-        `default` is None).
-        """
         inner_data = stream.read()
         key_value = self.key.resolve(context)
         fmt = self._get_fmt(key_value)
@@ -81,6 +84,8 @@ class Switch:
 
 @dataclass(frozen=True, slots=True)
 class TaggedUnion:
+    """Decode or encode one branch of a tagged ``msgspec.Struct`` union."""
+
     size: ClassVar[EllipsisType] = ...
 
     tag: Format | Ref
@@ -96,6 +101,7 @@ class TaggedUnion:
         *,
         context: Context,
     ) -> None:
+        """Populate a sibling tag field from the selected branch value when possible."""
         if not isinstance(self.tag, Ref):
             return
         parent = context.parents[-1]

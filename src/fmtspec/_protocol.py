@@ -58,7 +58,7 @@ class InspectNode(Struct, kw_only=True, gc=False):
     def __repr__(self) -> str:
         children_repr = f", children=[...] * {len(self.children)}" if self.children else ""
         return (
-            f"FormatNode(key={self.key!r}, fmt={self.fmt!r}, "
+            f"InspectNode(key={self.key!r}, fmt={self.fmt!r}, "
             f"offset={self.offset}, size={self.size}, value={self.value!r}{children_repr})"
         )
 
@@ -185,20 +185,32 @@ class Context(Struct, gc=False):
         *,
         prepend: bool = False,
     ) -> None:
-        """Create a leaf InspectNode and append it to the current children list.
+        """Record a manually encoded or decoded leaf value in the inspection tree.
 
-        Useful when a Type manually calls ``fmt.encode()`` / ``fmt.decode()``
-        (bypassing ``_encode_stream`` / ``_decode_stream``) but still needs an
-        inspection entry.  No-op when inspection is disabled.
+        This is mainly for custom ``Type`` implementations that directly call a
+        child formatter's ``encode(...)`` or ``decode(...)`` method instead of
+        delegating through ``fmtspec.stream.encode_stream(...)`` or
+        ``fmtspec.stream.decode_stream(...)``. It is a no-op when inspection is
+        disabled.
 
         Args:
             stream: The binary stream being read/written.
-            context: Serialization context with inspect state.
             key: Field name, index, or descriptive key for the node.
             fmt: The format specification used.
             value: The Python value encoded/decoded.
             start: Stream offset *before* the encode/decode call.
             prepend: If True, insert at position 0 instead of appending.
+
+        Example:
+            >>> from io import BytesIO
+            >>> from fmtspec import Context, types
+            >>> stream = BytesIO()
+            >>> ctx = Context(inspect=True)
+            >>> start = stream.tell()
+            >>> types.u8.encode(7, stream, context=ctx)
+            >>> ctx.inspect_leaf(stream, "count", types.u8, 7, start)
+            >>> ctx.inspect_children[0].key
+            'count'
         """
         if not self.inspect:
             return
@@ -223,30 +235,30 @@ class Context(Struct, gc=False):
         value,
         /,
     ):
-        """Full-featured context manager for InspectNode lifecycle management.
+        """Create an intermediate inspection node for nested custom logic.
 
-        Fast no-op when context.inspect is False. Handles:
-        - Node creation with data/size population
-        - Children scope management (context.inspect_children)
-        - Auto-append to parent's children list
-        - Optional root node tracking (context.inspect_node)
+        The returned context manager swaps ``inspect_children`` so nested work
+        becomes children of the yielded node. When inspection is disabled, this
+        returns a null context manager that yields ``None``.
 
         The yielded node's `value` attribute can be updated after creation,
         useful for decode operations where the value isn't known upfront.
 
         Args:
             stream: The binary stream being read/written.
-            context: Serialization context with inspect state.
             key: Field name, index, or None for root nodes.
             fmt: The format specification for this node.
             value: Initial value (can be None, updated via node.value later).
-            track_root: If True and context.inspect_node is None, sets it to this node.
 
-        Usage (Type classes - intermediate nodes):
-            with _inspect_scope(stream, context, i, self, value) as node:
-                # recursive encode/decode...
-                if node:
-                    node.value = decoded_result
+        Example:
+            >>> from io import BytesIO
+            >>> from fmtspec import Context, types
+            >>> stream = BytesIO()
+            >>> ctx = Context(inspect=True)
+            >>> with ctx.inspect_scope(stream, "payload", types.bytes_, b"abc") as node:
+            ...     types.bytes_.encode(b"abc", stream, context=ctx)
+            >>> node.size
+            3
 
         """
         # perf: fast no-op when inspection is disabled
@@ -267,8 +279,11 @@ class Type(Protocol):
               runtime_checkable limitations with property variance.
     """
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None: ...
-    def decode(self, stream: BinaryIO, *, context: Context) -> Any: ...
+    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+        """Write ``value`` to ``stream`` using this format."""
+
+    def decode(self, stream: BinaryIO, *, context: Context) -> Any:
+        """Read a value from ``stream`` using this format."""
 
 
 class MapPrefill(Protocol):

@@ -6,6 +6,14 @@ from ..stream import read_exactly, write_all
 
 @dataclass(frozen=True, slots=True)
 class Str:
+    """Text format backed by encoded bytes.
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> decode(encode("ok", types.Str(2, encoding="ascii")), types.Str(2, encoding="ascii"))
+        'ok'
+    """
+
     size: int | None = None
     encoding: str = "utf-8"
 

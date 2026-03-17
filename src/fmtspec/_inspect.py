@@ -37,13 +37,13 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
         fmt: The format specification.
 
     Returns:
-        A tuple containing:
-        - bytes: The encoded binary data.
-        - FormatNode: A tree capturing the serialization structure.
+        A tuple containing the encoded binary data and an ``InspectNode`` tree.
 
     Example:
-        >>> data, tree = encode_inspect({"x": 1, "y": 2}, {"x": u1, "y": u1})
-        >>> print(format_tree(tree))
+        >>> from fmtspec import types
+        >>> data, tree = encode_inspect({"x": 1, "y": 2}, {"x": types.u8, "y": types.u8})
+        >>> data
+        b'\x01\x02'
     """
     stream = BytesIO()
     try:
@@ -78,13 +78,13 @@ def decode_inspect[T](
         shape: Optional type to convert the result to (using msgspec).
 
     Returns:
-        A tuple containing:
-        - Any: The decoded Python object.
-        - FormatNode: A tree capturing the deserialization structure.
+        A tuple containing the decoded value and an ``InspectNode`` tree.
 
     Example:
-        >>> result, tree = decode_inspect(b"\\x01\\x02", {"x": u1, "y": u1})
-        >>> print(format_tree(tree))
+        >>> from fmtspec import types
+        >>> result, tree = decode_inspect(b"\x01\x02", {"x": types.u8, "y": types.u8})
+        >>> result["y"]
+        2
     """
     stream = BytesIO(data)
     try:
@@ -109,7 +109,7 @@ def format_tree(  # noqa: PLR0913
     """Format an inspection tree as a human-readable string.
 
     Args:
-        node: The root FormatNode to format.
+        node: The root ``InspectNode`` to format.
         indent: String used for each indentation level.
         show_data: Whether to include raw bytes in the output.
         max_data_bytes: Maximum number of bytes to show (truncated with ...).
@@ -120,7 +120,8 @@ def format_tree(  # noqa: PLR0913
         A formatted string representation of the tree.
 
     Example:
-        >>> data, tree = encode_inspect({"x": 1, "y": 2}, {"x": u1, "y": u1})
+        >>> from fmtspec import types
+        >>> data, tree = encode_inspect({"x": 1, "y": 2}, {"x": types.u8, "y": types.u8})
         >>> print(format_tree(tree))
         [root] @ 0-2 (2 bytes)
           ├─ [x] @ 0-1 (1 bytes)

@@ -48,6 +48,8 @@ class Literal:
 
 @dataclass(frozen=True, slots=True)
 class Null:
+    """Zero-width format that only accepts and returns ``None``."""
+
     # class variables
     constant: ClassVar[bool] = True
     size: ClassVar[int] = 0
@@ -55,7 +57,7 @@ class Null:
     def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:  # noqa: ARG002
         assert value is None
 
-    def decode(self, stream: BinaryIO, **_: Any) -> None:
+    def decode(self, stream: BinaryIO, **_: Any) -> None:  # noqa: ARG002
         return None
 
 

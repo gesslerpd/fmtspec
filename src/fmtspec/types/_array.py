@@ -127,6 +127,13 @@ class Array:
 
     Encodes/decodes a multi-dimensional fixed-size array. The element format
     is applied to each element in row-major order.
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> fmt = types.array(types.u8, dims=3)
+        >>> data = encode([1, 2, 3], fmt)
+        >>> decode(data, fmt)
+        [1, 2, 3]
     """
 
     element_fmt: Format

@@ -1,4 +1,4 @@
-"""Lazy format evaluation for self-referential type definitions."""
+"""Optional trailing-value format."""
 
 from __future__ import annotations
 
@@ -15,6 +15,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class Optional:
+    """Decode an optional trailing value.
+
+    Encoding omits the wrapped format when the value is ``None``. Decoding
+    returns ``None`` when the wrapped format would hit end-of-stream.
+    """
+
     size: ClassVar[EllipsisType] = ...
 
     fmt: Format

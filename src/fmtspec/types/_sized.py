@@ -25,6 +25,12 @@ class Sized:
     - a format/type: encode/decode the length using that format
 
     `factor` multiplies the decoded length to get byte count (e.g., factor=2 for word count).
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> fmt = types.Sized(length=types.u8, fmt=types.Bytes())
+        >>> decode(encode(b"abc", fmt), fmt)
+        b'abc'
     """
 
     length: int | Type | Ref

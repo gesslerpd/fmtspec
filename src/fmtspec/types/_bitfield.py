@@ -15,6 +15,12 @@ SIZE_MAP = {1: u8, 2: u16, 4: u32, 8: u64}
 
 @dataclass(frozen=True, slots=True)
 class Bitfield:
+    """Describe one packed bit range inside a larger integer value.
+
+    ``offset`` is counted in bits from the least-significant side.
+    When ``bits == 1``, decode returns ``bool`` unless ``enum`` is used.
+    """
+
     bits: int
     # zero means auto-assign
     offset: int = 0
@@ -49,7 +55,7 @@ class Bitfield:
 
     # implement Type interface so this can be used directly
     # FUTURE: see if this can be garbage collected or make weak `self` reference
-    def encode(self, value: int, stream: BinaryIO, **_: Any):
+    def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
         return Bitfields(fields={"": self}).encode({"": value}, stream, **_)
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
@@ -58,6 +64,15 @@ class Bitfield:
 
 @dataclass(frozen=True, slots=True)
 class Bitfields:
+    """Pack multiple named fields into a single integer-backed value.
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> flags = types.Bitfields(size=1, fields={"ready": types.Bitfield(bits=1)})
+        >>> decode(encode({"ready": True}, flags), flags)
+        {'ready': True}
+    """
+
     fields: dict[str, Bitfield]
     size: Literal[1, 2, 4, 8] | None = None
     _int_type: Int = field(init=False, repr=False, compare=False)
@@ -162,7 +177,7 @@ class Bitfields:
         self._int_type.encode(int_val, stream, **_)
         # self._inspect_fields(value, stream, context, start)
 
-    def _decode_bitfield(self, bitfield, name, int_val):
+    def _decode_bitfield(self, bitfield: Bitfield, name: str, int_val: int) -> int:
         raw = (int_val >> self._offsets[name]) & bitfield.mask
         if bitfield.enum and raw in bitfield.enum:
             return bitfield.enum(raw)

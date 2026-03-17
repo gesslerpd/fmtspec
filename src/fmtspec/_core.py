@@ -345,10 +345,17 @@ def _encode_stream_impl(
 
 
 def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None:
-    """Encode formatted object into a binary stream.
+    """Encode a value directly into stream.
 
-    If `fmt` is None, attempt to derive the format from the object's class
-    using `derive_fmt`.
+    If ``fmt`` is omitted, fmtspec attempts to derive it from ``obj``.
+
+    Example:
+        >>> from io import BytesIO
+        >>> from fmtspec import encode_stream, types
+        >>> stream = BytesIO()
+        >>> encode_stream(7, stream, types.u16)
+        >>> stream.getvalue()
+        b'\x00\x07'
     """
     _encode_stream_impl(obj, stream, fmt, inspect=False)
 
@@ -462,15 +469,28 @@ def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, shape: None = 
 def decode_stream[T](
     stream: BinaryIO, fmt: Format | None = None, *, shape: type[T] | None = None
 ) -> T | Any:
-    """Decode a binary stream into formatted object.
+    """Decode a value directly from stream.
 
-    If `fmt` is None, attempt to derive the format from `shape`.
+    If ``fmt`` is omitted, ``shape`` must be provided so fmtspec can derive
+    the format before decoding.
+
+    Example:
+        >>> from io import BytesIO
+        >>> from fmtspec import decode_stream, types
+        >>> decode_stream(BytesIO(b'\x00\x07'), types.u16)
+        7
     """
     return _decode_stream_impl(stream, fmt, shape=shape)[0]
 
 
 def encode(obj: Any, fmt: Format | None = None) -> bytes:
-    """Encode formatted object into bytes."""
+    """Encode a value into bytes.
+
+    Example:
+        >>> from fmtspec import encode, types
+        >>> encode(7, types.u16)
+        b'\x00\x07'
+    """
     stream = BytesIO()
     encode_stream(obj, stream, fmt=fmt)
     return stream.getvalue()
@@ -491,7 +511,16 @@ def decode(
 def decode[T](
     data: Buffer, fmt: Format | None = None, *, shape: type[T] | None = None, strict: bool = False
 ) -> T | Any:
-    """Decode bytes into formatted object."""
+    """Decode a value from bytes.
+
+    When ``strict`` is true, fmtspec raises ``DecodeError`` if trailing bytes
+    remain after the decode succeeds.
+
+    Example:
+        >>> from fmtspec import decode, types
+        >>> decode(b'\x00\x07', types.u16)
+        7
+    """
     # do this here for greedy field preprocessing
     if fmt is None:
         if shape is None:

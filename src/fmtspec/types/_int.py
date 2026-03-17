@@ -29,7 +29,13 @@ class _Struct:
 
 @dataclass(frozen=True, slots=True)
 class Int:
-    """Fixed-size integer type."""
+    """Fixed-width integer format.
+
+    Example:
+        >>> from fmtspec import decode, encode, types
+        >>> decode(encode(513, types.u16le), types.u16le)
+        513
+    """
 
     # can use `sys.byteorder` for native byte order
     byteorder: Literal["little", "big"]
