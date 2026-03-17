@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Simple benchmarks for ende encode/decode paths.
+"""Simple benchmarks for fmtspec encode/decode paths.
 
 Usage:
     python scripts/benchmark.py --iterations 1000 --repeats 5 --list-size 1000
@@ -126,7 +126,7 @@ def main() -> None:
     #     args.repeats,
     # )
 
-    # Compare the local `msgpack_fmt` implementation via the ende API
+    # Compare the local `msgpack_fmt` implementation via the fmtspec API
     base = {
         "id": 1,
         "name": "Alice",
@@ -139,18 +139,18 @@ def main() -> None:
     }
     payload = {"records": [base] * 200}
 
-    ende_msgpack_blob = encode(payload, fmt=msgpack_fmt)
+    fmtspec_msgpack_blob = encode(payload, fmt=msgpack_fmt)
 
     bench(
-        "encode: ende (msgpack_fmt)",
+        "encode: fmtspec (msgpack_fmt)",
         lambda: encode(payload, fmt=msgpack_fmt),
         args.iterations,
         args.repeats,
     )
 
     bench(
-        "decode: ende (msgpack_fmt)",
-        lambda: decode(ende_msgpack_blob, fmt=msgpack_fmt),
+        "decode: fmtspec (msgpack_fmt)",
+        lambda: decode(fmtspec_msgpack_blob, fmt=msgpack_fmt),
         args.iterations,
         args.repeats,
     )
@@ -158,7 +158,7 @@ def main() -> None:
     # Also compare to the external `msgpack` package when available
     if msgpack is not None:
         lib_blob = msgpack.packb(payload)
-        assert lib_blob == ende_msgpack_blob
+        assert lib_blob == fmtspec_msgpack_blob
 
         bench(
             "encode: msgpack.packb",
