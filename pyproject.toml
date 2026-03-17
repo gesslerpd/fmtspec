@@ -11,6 +11,11 @@ dependencies = [
     "msgspec>=0.20.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/gesslerpd/fmtspec"
+Repository = "https://github.com/gesslerpd/fmtspec"
+Issues = "https://github.com/gesslerpd/fmtspec/issues"
+
 [build-system]
 requires = ["uv-build>=0.10,<0.11"]
 build-backend = "uv_build"
