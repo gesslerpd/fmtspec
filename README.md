@@ -1,5 +1,8 @@
 # fmtspec
 
+[![PyPI Version](https://img.shields.io/pypi/v/fmtspec.svg)](https://pypi.org/project/fmtspec/)
+[![Latest Release](https://img.shields.io/github/release-date/gesslerpd/fmtspec)](https://github.com/gesslerpd/fmtspec/releases)
+
 `fmtspec` is a Python library for binary encoding and decoding built around
 composable format objects.
 
