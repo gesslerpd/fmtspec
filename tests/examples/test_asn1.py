@@ -13,10 +13,10 @@ This example implements a compact ASN.1 encoder/decoder that supports:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from fmtspec import (
     Context,
@@ -35,8 +35,19 @@ if TYPE_CHECKING:
     from types import EllipsisType
 
 
-type ASN1Class = Literal["universal", "application", "context", "private"]
-type ASN1Node = dict[str, Any]
+class ASN1Class(Enum):
+    UNIVERSAL = "universal"
+    APPLICATION = "application"
+    CONTEXT = "context"
+    PRIVATE = "private"
+
+
+@dataclass
+class ASN1Node:
+    tag: int
+    value: Any
+    tag_class: ASN1Class = ASN1Class.UNIVERSAL
+    constructed: bool = False
 
 
 class TagClass(IntEnum):
@@ -62,20 +73,6 @@ class UniversalTag(IntEnum):
     GENERALIZED_TIME = 24
 
 
-CLASS_TO_BITS: dict[ASN1Class, int] = {
-    "universal": TagClass.UNIVERSAL,
-    "application": TagClass.APPLICATION,
-    "context": TagClass.CONTEXT,
-    "private": TagClass.PRIVATE,
-}
-BITS_TO_CLASS: dict[TagClass, ASN1Class] = {
-    TagClass.UNIVERSAL: "universal",
-    TagClass.APPLICATION: "application",
-    TagClass.CONTEXT: "context",
-    TagClass.PRIVATE: "private",
-}
-
-
 ASN1_TAG_OCTET = types.Bitfields(
     fields={
         "tag_low": types.Bitfield(bits=5),
@@ -96,7 +93,7 @@ class ASN1Tag:
             {
                 "tag_low": tag & TAG_MASK,
                 "constructed": int(constructed),
-                "tag_class": CLASS_TO_BITS[tag_class],
+                "tag_class": TagClass[tag_class.name],
             },
             stream,
         )
@@ -105,7 +102,7 @@ class ASN1Tag:
 
     def decode(self, stream, **_) -> tuple[ASN1Class, int, bool]:
         first = ASN1_TAG_OCTET.decode(stream)
-        tag_class = BITS_TO_CLASS[TagClass(first["tag_class"])]
+        tag_class = ASN1Class[TagClass(first["tag_class"]).name]
         constructed = bool(first["constructed"])
         low_tag = first["tag_low"]
         if low_tag < TAG_MASK:
@@ -325,7 +322,7 @@ class ASN1:
     size: ClassVar[EllipsisType] = ...
 
     def _encode_constructed_body_with_nodes(
-        self, items: list[ASN1Node], context: Context
+        self, items: list[dict], context: Context
     ) -> tuple[bytes, Iterable[InspectNode]]:
         buf = BytesIO()
         # create a new context to avoid mutating the parent context inspect_node
@@ -368,21 +365,21 @@ class ASN1:
         if stream.tell() != end:
             raise ValueError("Constructed value length mismatch")
 
-    def encode(self, value: ASN1Node, stream, *, context: Context) -> None:
-        tag_class: ASN1Class = value.get("tag_class", "universal")
+    def encode(self, value: dict, stream, *, context: Context) -> None:
+        tag_class = ASN1Class(value.get("tag_class", ASN1Class.UNIVERSAL))
         tag: int = value["tag"]
         inner_value = value.get("value")
 
         constructed = value.get("constructed")
         if constructed is None:
-            constructed = tag_class == "universal" and tag in CONSTRUCTED_TAGS
+            constructed = tag_class == ASN1Class.UNIVERSAL and tag in CONSTRUCTED_TAGS
 
         body_nodes = []
         if constructed:
             if not isinstance(inner_value, list):
                 raise TypeError("Constructed ASN.1 node value must be a list of child nodes")
             body, body_nodes = self._encode_constructed_body_with_nodes(inner_value, context)
-        elif tag_class == "universal":
+        elif tag_class == ASN1Class.UNIVERSAL:
             body = _encode_universal_primitive(tag, inner_value)
         else:
             body = bytes(inner_value)
@@ -423,139 +420,85 @@ class ASN1:
                 raise ValueError("Indefinite length is only valid for constructed values")
             body_start = stream.tell()
             body = read_exactly(stream, length)
-            if tag_class == "universal":
+            if tag_class == ASN1Class.UNIVERSAL:
                 value = _decode_universal_primitive(tag, body)
             else:
                 value = body
             context.inspect_leaf(stream, "value", types.Bytes(length), value, body_start)
 
-        return {
-            "tag_class": tag_class,
-            "tag": tag,
-            "constructed": constructed,
-            "value": value,
-        }
+        # this is asymmetric from `encode` because this is a recursive type and
+        # `msgspec.convert` is overloaded by the `value` wide union type
+        return ASN1Node(
+            tag_class=tag_class,
+            tag=tag,
+            constructed=constructed,
+            value=value,
+        )
 
 
 asn1 = ASN1()
 
 
 def test_integer_roundtrip() -> None:
-    node = {
-        "tag": UniversalTag.INTEGER,
-        "value": 2026,
-    }
+    node = ASN1Node(tag=UniversalTag.INTEGER, value=2026)
 
     encoded = encode(node, asn1)
     assert encoded == b"\x02\x02\x07\xea"
-    assert decode(encoded, asn1) == {
-        "tag_class": "universal",
-        "tag": UniversalTag.INTEGER,
-        "constructed": False,
-        "value": 2026,
-    }
+    assert decode(encoded, asn1) == node
 
 
 def test_sequence_roundtrip() -> None:
-    node = {
-        "tag": UniversalTag.SEQUENCE,
-        "constructed": True,
-        "value": [
-            {"tag": UniversalTag.INTEGER, "value": 42},
-            {"tag": UniversalTag.OCTET_STRING, "value": b"hello"},
-            {"tag": UniversalTag.NULL, "value": None},
-            {"tag": UniversalTag.BOOLEAN, "value": True},
+    node = ASN1Node(
+        tag=UniversalTag.SEQUENCE,
+        constructed=True,
+        value=[
+            ASN1Node(tag=UniversalTag.INTEGER, value=42),
+            ASN1Node(tag=UniversalTag.OCTET_STRING, value=b"hello"),
+            ASN1Node(tag=UniversalTag.NULL, value=None),
+            ASN1Node(tag=UniversalTag.BOOLEAN, value=True),
         ],
-    }
+    )
 
     encoded = encode(node, asn1)
     decoded = decode(encoded, asn1)
 
-    assert decoded == {
-        "tag_class": "universal",
-        "tag": UniversalTag.SEQUENCE,
-        "constructed": True,
-        "value": [
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.INTEGER,
-                "constructed": False,
-                "value": 42,
-            },
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.OCTET_STRING,
-                "constructed": False,
-                "value": b"hello",
-            },
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.NULL,
-                "constructed": False,
-                "value": None,
-            },
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.BOOLEAN,
-                "constructed": False,
-                "value": True,
-            },
-        ],
-    }
+    assert decoded == node
 
 
 def test_object_identifier_roundtrip() -> None:
-    node = {
-        "tag": UniversalTag.OBJECT_IDENTIFIER,
-        "value": "1.2.840.113549",
-    }
+    node = ASN1Node(tag=UniversalTag.OBJECT_IDENTIFIER, value="1.2.840.113549")
 
     encoded = encode(node, asn1)
     assert encoded == b"\x06\x06\x2a\x86\x48\x86\xf7\x0d"
 
     decoded = decode(encoded, asn1)
-    assert decoded["value"] == "1.2.840.113549"
+    assert decoded == node
 
 
 def test_context_specific_explicit_roundtrip() -> None:
-    node = {
-        "tag_class": "context",
-        "tag": 0,
-        "constructed": True,
-        "value": [
-            {"tag": UniversalTag.INTEGER, "value": 5},
+    node = ASN1Node(
+        tag_class=ASN1Class.CONTEXT,
+        tag=0,
+        constructed=True,
+        value=[
+            ASN1Node(tag=UniversalTag.INTEGER, value=5),
         ],
-    }
+    )
 
     encoded = encode(node, asn1)
     assert encoded == b"\xa0\x03\x02\x01\x05"
-    assert decode(encoded, asn1) == {
-        "tag_class": "context",
-        "tag": 0,
-        "constructed": True,
-        "value": [
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.INTEGER,
-                "constructed": False,
-                "value": 5,
-            }
-        ],
-    }
+    assert decode(encoded, asn1) == node
 
 
 def test_long_form_length_roundtrip() -> None:
     payload = b"A" * 130
-    node = {
-        "tag": UniversalTag.OCTET_STRING,
-        "value": payload,
-    }
+    node = ASN1Node(tag=UniversalTag.OCTET_STRING, value=payload)
 
     encoded = encode(node, asn1)
     assert encoded[:3] == b"\x04\x81\x82"
 
     decoded = decode(encoded, asn1)
-    assert decoded["value"] == payload
+    assert decoded == node
 
 
 def test_decode_known_der_sample() -> None:
@@ -563,23 +506,23 @@ def test_decode_known_der_sample() -> None:
     sample = b"\x30\x0a\x02\x01\x2a\x04\x05hello"
     decoded = decode(sample, asn1)
 
-    assert decoded["tag"] == UniversalTag.SEQUENCE
-    assert decoded["constructed"] is True
-    assert decoded["value"][0]["value"] == 42
-    assert decoded["value"][1]["value"] == b"hello"
+    assert decoded.tag == UniversalTag.SEQUENCE
+    assert decoded.constructed
+    assert decoded.value[0].value == 42
+    assert decoded.value[1].value == b"hello"
 
     assert encode(decoded, asn1) == sample
 
 
 def test_inspect_sequence_has_tlv_children() -> None:
-    node = {
-        "tag": UniversalTag.SEQUENCE,
-        "constructed": True,
-        "value": [
-            {"tag": UniversalTag.INTEGER, "value": 42},
-            {"tag": UniversalTag.OCTET_STRING, "value": b"hi"},
+    node = ASN1Node(
+        tag=UniversalTag.SEQUENCE,
+        constructed=True,
+        value=[
+            ASN1Node(tag=UniversalTag.INTEGER, value=42),
+            ASN1Node(tag=UniversalTag.OCTET_STRING, value=b"hi"),
         ],
-    }
+    )
 
     encoded, encode_tree = encode_inspect(node, asn1)
     assert encoded == b"\x30\x07\x02\x01\x2a\x04\x02hi"
@@ -587,39 +530,21 @@ def test_inspect_sequence_has_tlv_children() -> None:
     assert encode_keys[2:] == [0, 1]
 
     decoded, decode_tree = decode_inspect(encoded, asn1)
-    assert decoded == {
-        "tag_class": "universal",
-        "tag": UniversalTag.SEQUENCE,
-        "constructed": True,
-        "value": [
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.INTEGER,
-                "constructed": False,
-                "value": 42,
-            },
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.OCTET_STRING,
-                "constructed": False,
-                "value": b"hi",
-            },
-        ],
-    }
+    assert decoded == node
     decode_keys = [child.key for child in decode_tree.children]
     assert decode_keys[2:] == [0, 1]
 
 
 def test_inspect_constructed_context_tree_encode_decode() -> None:
-    node = {
-        "tag_class": "context",
-        "tag": 1,
-        "constructed": True,
-        "value": [
-            {"tag": UniversalTag.INTEGER, "value": 7},
-            {"tag": UniversalTag.OCTET_STRING, "value": b"ok"},
+    node = ASN1Node(
+        tag_class=ASN1Class.CONTEXT,
+        tag=1,
+        constructed=True,
+        value=[
+            ASN1Node(tag=UniversalTag.INTEGER, value=7),
+            ASN1Node(tag=UniversalTag.OCTET_STRING, value=b"ok"),
         ],
-    }
+    )
 
     encoded, encode_tree = encode_inspect(node, asn1)
     assert encoded == b"\xa1\x07\x02\x01\x07\x04\x02ok"
@@ -637,25 +562,7 @@ def test_inspect_constructed_context_tree_encode_decode() -> None:
     assert second_child_keys[1:] == ["--len--", "value"]
 
     decoded, decode_tree = decode_inspect(encoded, asn1)
-    assert decoded == {
-        "tag_class": "context",
-        "tag": 1,
-        "constructed": True,
-        "value": [
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.INTEGER,
-                "constructed": False,
-                "value": 7,
-            },
-            {
-                "tag_class": "universal",
-                "tag": UniversalTag.OCTET_STRING,
-                "constructed": False,
-                "value": b"ok",
-            },
-        ],
-    }
+    assert decoded == node
 
     decode_keys = [child.key for child in decode_tree.children]
     assert decode_keys[0] in {"tag", "--tag--"}
@@ -677,28 +584,29 @@ def test_decode_x509_certificate() -> None:
     data = certificate_der.read_bytes()
     certificate, tree = decode_inspect(data, asn1)
 
-    assert certificate["tag"] == UniversalTag.SEQUENCE
-    assert certificate["constructed"]
-    assert len(certificate["value"]) == 3
+    assert certificate.tag == UniversalTag.SEQUENCE
+    assert certificate.tag_class == ASN1Class.UNIVERSAL
+    assert certificate.constructed
+    assert len(certificate.value) == 3
 
-    tbs_certificate, signature_algorithm, signature_value = certificate["value"]
-    assert tbs_certificate["tag"] == UniversalTag.SEQUENCE
-    assert signature_algorithm["tag"] == UniversalTag.SEQUENCE
-    assert signature_value["tag"] == UniversalTag.BIT_STRING
+    tbs_certificate, signature_algorithm, signature_value = certificate.value
+    assert tbs_certificate.tag == UniversalTag.SEQUENCE
+    assert signature_algorithm.tag == UniversalTag.SEQUENCE
+    assert signature_value.tag == UniversalTag.BIT_STRING
 
-    tbs_fields = tbs_certificate["value"]
+    tbs_fields = tbs_certificate.value
     assert len(tbs_fields) >= 7
 
     issuer = tbs_fields[3]
     subject = tbs_fields[5]
 
-    issuer_cn = issuer["value"][0]["value"][0]["value"][1]["value"]
-    subject_cn = subject["value"][0]["value"][0]["value"][1]["value"]
+    issuer_cn = issuer.value[0].value[0].value[1].value
+    subject_cn = subject.value[0].value[0].value[1].value
     assert issuer_cn == "US"
     assert subject_cn == "US"
 
-    issuer_org = issuer["value"][1]["value"][0]["value"][1]["value"]
-    subject_org = subject["value"][1]["value"][0]["value"][1]["value"]
+    issuer_org = issuer.value[1].value[0].value[1].value
+    subject_org = subject.value[1].value[0].value[1].value
     assert issuer_org == "DigiCert Inc"
     assert subject_org == "Apple Inc."
 

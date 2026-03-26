@@ -266,8 +266,9 @@ def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
         return msgspec.convert(
             obj,
             shape,
-            builtin_types=BUILTIN_TYPES,
+            from_attributes=True,  # allow conversion from Type objects that return dataclasses
             dec_hook=None if recursive else _msgspec_decode_hook,
+            builtin_types=BUILTIN_TYPES,
         )
     except msgspec.DecodeError:
         if not recursive:
@@ -411,9 +412,9 @@ def _decode_stream_impl[T](
         assert_never(e)  # type: ignore
         raise
     except Exception as e:
-        # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
         context = ctx.parents[-1]
-        obj = context
+        obj = None
+        # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
         if shape is not None:
             try:
                 obj = _convert(context, shape, recursive=False)

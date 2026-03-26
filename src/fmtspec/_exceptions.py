@@ -22,7 +22,7 @@ class Error(Exception):
     _PREAMBLE = "Error"
 
     message: str
-    obj: Any
+    obj: Any | None
     stream: BinaryIO
     fmt: Format | None
     context: Any
