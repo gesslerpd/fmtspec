@@ -11,9 +11,9 @@ def test_iterable_array():
         (3, 4),
         (5, 6),
     ]
-    array_fmt = types.array(types.u16, (3, 2))
+    array_fmt = types.array(types.u16, dims=(3, 2))
 
-    assert array_fmt == types.array(types.u16, (3, 2))
+    assert array_fmt == types.array(types.u16, dims=(3, 2))
 
     data = encode(
         obj,
@@ -35,7 +35,7 @@ def test_iterable_array():
 
 
 def test_1d_array_roundtrip():
-    arr = types.array(types.u8, 3)
+    arr = types.array(types.u8, dims=3)
     obj = [1, 2, 3]
 
     data = encode(obj, arr)
@@ -46,15 +46,15 @@ def test_1d_array_roundtrip():
 
 
 def test_array_size_and_equality():
-    arr = types.array(types.u16, (3, 2))
+    arr = types.array(types.u16, dims=(3, 2))
 
     # 3*2 elements * 2 bytes each == 12
     assert arr.size == 12
-    assert arr == types.array(types.u16, (3, 2))
+    assert arr == types.array(types.u16, dims=(3, 2))
 
 
 def test_array_wrong_shape_raises_on_encode():
-    arr = types.array(types.u16, (2, 2))
+    arr = types.array(types.u16, dims=(2, 2))
 
     # outer length wrong
     with pytest.raises(EncodeError):
@@ -68,15 +68,15 @@ def test_array_wrong_shape_raises_on_encode():
 def test_array_invalid_dims_raises():
     u8 = types.u8le
     with pytest.raises(ValueError, match="positive integers"):
-        types.array(u8, (0, 3))
+        types.array(u8, dims=(0, 3))
 
     with pytest.raises(ValueError, match="positive integers"):
-        types.array(u8, (-1,))
+        types.array(u8, dims=(-1,))
 
 
 def test_array_zero_leaf_dim_1d_roundtrip():
     u8 = types.u8le
-    arr = types.array(u8, 0)
+    arr = types.array(u8, dims=0)
 
     data = encode([], arr)
     assert data == b""
@@ -88,7 +88,7 @@ def test_array_zero_leaf_dim_1d_roundtrip():
 
 def test_array_zero_leaf_dim_2d_roundtrip():
     u8 = types.u8le
-    arr = types.array(u8, (3, 0))
+    arr = types.array(u8, dims=(3, 0))
 
     obj = [[], [], []]
     data = encode(obj, arr)
@@ -102,11 +102,11 @@ def test_array_zero_leaf_dim_2d_roundtrip():
 def test_array_zero_leaf_dim_encode_mismatch_raises():
     u8 = types.u8
 
-    arr0 = types.array(u8, 0)
+    arr0 = types.array(u8, dims=0)
     with pytest.raises(EncodeError, match=r"dims\[0\]=0, got 1"):
         encode([1], arr0)
 
-    arr_3_0 = types.array(u8, (3, 0))
+    arr_3_0 = types.array(u8, dims=(3, 0))
     with pytest.raises(EncodeError, match=r"dims\[0\]=3, got 2"):
         encode([[], []], arr_3_0)
 
@@ -116,7 +116,7 @@ def test_array_zero_leaf_dim_encode_mismatch_raises():
 
 def test_array_decode_insufficient_bytes_raises():
     u8 = types.u8
-    arr = types.array(u8, 3)
+    arr = types.array(u8, dims=3)
 
     # third element is missing
     with pytest.raises(DecodeError, match=r"didn't return enough bytes"):
@@ -125,7 +125,7 @@ def test_array_decode_insufficient_bytes_raises():
 
 def test_array_zero_leaf_dim_decode_strict_excess_raises():
     u8 = types.u8le
-    arr0 = types.array(u8, 0)
+    arr0 = types.array(u8, dims=0)
 
     with pytest.raises(DecodeError, match=r"Excess data after decoding"):
         decode(b"\x01", arr0, strict=True)
@@ -147,25 +147,25 @@ def test_prefixed_array_roundtrip():
 
 def test_size_attribute_various():
     u16 = types.u16be
-    arr = types.array(u16, (3, 2))
+    arr = types.array(u16, dims=(3, 2))
     assert arr.size == 12
 
     p = types.Array(element_fmt=u16, dims=(u16,))
     assert p.size is ...
 
-    arr2 = types.array(p, (2, 2))
+    arr2 = types.array(p, dims=(2, 2))
     assert arr2.size is ...
 
     u8 = types.u8le
-    nested = types.array(u8, 4)
+    nested = types.array(u8, dims=4)
     assert nested.size == 4
 
-    arr3 = types.array(nested, 2)
+    arr3 = types.array(nested, dims=2)
     assert arr3.size == 8
 
 
 def test_array_wrong_shape_raises_on_encode_deep():
-    arr3 = types.array(types.u16, (2, 2, 2))
+    arr3 = types.array(types.u16, dims=(2, 2, 2))
 
     obj = [
         [[1, 2], [3, 4], [5, 6]],
@@ -178,7 +178,7 @@ def test_array_wrong_shape_raises_on_encode_deep():
 
 def test_array_wrong_outer_length_raises_on_encode():
     u8 = types.u8le
-    arr = types.array(u8, 2)
+    arr = types.array(u8, dims=2)
 
     with pytest.raises(EncodeError, match="dims\\[0\\]=2, got 3"):
         encode([1, 2, 3], arr)
@@ -189,7 +189,7 @@ def test_array_mixed_dims_roundtrip():
 
     fmt = {
         "n": u8,
-        "arr": types.array(u8, (types.Ref("n"), 2)),
+        "arr": types.array(u8, dims=(types.Ref("n"), 2)),
     }
 
     obj = {"n": 3, "arr": [[1, 2], [3, 4], [5, 6]]}
@@ -203,7 +203,7 @@ def test_array_mixed_dims_roundtrip():
 
 def test_greedy_array_roundtrip():
     u16 = types.u16be
-    arr = types.array(u16, ())
+    arr = types.array(u16, dims=())
 
     obj = [10, 20, 30]
     data = encode(obj, arr)
@@ -216,7 +216,7 @@ def test_greedy_array_roundtrip():
 
 def test_greedy_array_size_is_none():
     u8 = types.u8be
-    arr = types.array(u8, ())
+    arr = types.array(u8, dims=())
     assert arr.size is None
 
 
@@ -225,7 +225,7 @@ def test_array_mixed_dims_wrong_shape_raises():
 
     fmt = {
         "n": u8,
-        "arr": types.array(u8, (types.Ref("n"), 2)),
+        "arr": types.array(u8, dims=(types.Ref("n"), 2)),
     }
 
     # provided n=2 but arr has inner length 3 -> should raise EncodeError
@@ -235,7 +235,7 @@ def test_array_mixed_dims_wrong_shape_raises():
 
 def test_array_mixed_dims_size_is_dynamic():
     u8 = types.u8be
-    arr = types.array(u8, (types.Ref("n"), 2))
+    arr = types.array(u8, dims=(types.Ref("n"), 2))
     assert arr.size is ...
 
 
@@ -244,7 +244,7 @@ def test_array_dims_from_context_roundtrip():
 
     fmt = {
         "length": u8,
-        "data": types.array(u8, types.Ref("length")),
+        "data": types.array(u8, dims=types.Ref("length")),
     }
 
     obj = {"length": 3, "data": [1, 2, 3]}
@@ -261,7 +261,7 @@ def test_array_dims_from_context_wrong_shape_raises():
 
     fmt = {
         "n": u8,
-        "arr": types.array(u8, (types.Ref("n"),)),
+        "arr": types.array(u8, dims=(types.Ref("n"),)),
     }
 
     # provided n=2 but arr has length 3 -> should raise EncodeError
@@ -279,7 +279,7 @@ def test_image():
                 "g": types.u8be,
                 "b": types.u8be,
             },
-            (types.Ref("height"), types.Ref("width")),
+            dims=(types.Ref("height"), types.Ref("width")),
         ),
     }
     obj = {
@@ -315,7 +315,7 @@ def test_image():
 
 
 def test_array_of_float32_roundtrip():
-    arr = types.array(types.f32, 3)
+    arr = types.array(types.f32, dims=3)
     obj = [1.0, 2.0, 3.0]
     data = encode(obj, arr)
     assert len(data) == len(obj) * 4
@@ -324,7 +324,7 @@ def test_array_of_float32_roundtrip():
 
 
 def test_array_of_float64_roundtrip():
-    arr = types.array(types.f64, 3)
+    arr = types.array(types.f64, dims=3)
     obj = [1.0, 2.0, 3.0]
     data = encode(obj, arr)
     assert len(data) == len(obj) * 8
@@ -333,7 +333,7 @@ def test_array_of_float64_roundtrip():
 
 
 def test_array_of_float32le_roundtrip():
-    arr = types.array(types.f32le, 3)
+    arr = types.array(types.f32le, dims=3)
     obj = [1.0, 2.0, 3.0]
     data = encode(obj, arr)
     assert len(data) == len(obj) * 4
@@ -342,7 +342,7 @@ def test_array_of_float32le_roundtrip():
 
 
 def test_array_of_float64le_roundtrip():
-    arr = types.array(types.f64le, 3)
+    arr = types.array(types.f64le, dims=3)
     obj = [1.0, 2.0, 3.0]
     data = encode(obj, arr)
     assert len(data) == len(obj) * 8

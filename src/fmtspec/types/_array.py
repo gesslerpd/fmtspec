@@ -6,7 +6,7 @@ import io
 import sys
 from array import array as _parray
 from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from .._stream import _decode_stream, _encode_stream
@@ -137,6 +137,9 @@ class Array:
     """
 
     element_fmt: Format
+
+    _: KW_ONLY
+
     # dims may be static ints or string keys looked up from the current
     # parent context (e.g., sibling field names). When any dimension is a
     # context key the overall array size is dynamic (`...`).
@@ -445,10 +448,10 @@ class Array:
         return items
 
 
-def array(fmt: Format, dims: int | Type | Ref | Iterable[int | Type | Ref] = ()) -> Array:
+def array(fmt: Format, *, dims: int | Type | Ref | Iterable[int | Type | Ref] = ()) -> Array:
     """Helper that returns an `Array` instance for the given element format
     and dimensions. Mirrors the old helper but produces an efficient `Array`.
     """
     if not isinstance(dims, Iterable):
         dims = (dims,)
-    return Array(fmt, tuple(dims))
+    return Array(fmt, dims=tuple(dims))

@@ -794,7 +794,7 @@ class TestArrayInspect:
 
     def test_1d_array_encode_inspect(self):
         """Test inspection of a 1D array encode."""
-        arr_fmt = types.array(types.u8, 3)
+        arr_fmt = types.array(types.u8, dims=3)
         obj = [1, 2, 3]
         data, tree = fmtspec.encode_inspect(obj, arr_fmt)
 
@@ -824,7 +824,7 @@ class TestArrayInspect:
 
     def test_1d_array_decode_inspect(self):
         """Test inspection of a 1D array decode."""
-        arr_fmt = types.array(types.u8, 3)
+        arr_fmt = types.array(types.u8, dims=3)
         result, tree = fmtspec.decode_inspect(b"\x01\x02\x03", arr_fmt)
 
         assert result == [1, 2, 3]
@@ -849,7 +849,7 @@ class TestArrayInspect:
 
     def test_2d_array_encode_inspect(self):
         """Test inspection of a 2D array encode."""
-        arr_fmt = types.array(types.u8, (2, 3))
+        arr_fmt = types.array(types.u8, dims=(2, 3))
         obj = [[1, 2, 3], [4, 5, 6]]
         data, tree = fmtspec.encode_inspect(obj, arr_fmt)
 
@@ -876,7 +876,7 @@ class TestArrayInspect:
 
     def test_2d_array_decode_inspect(self):
         """Test inspection of a 2D array decode."""
-        arr_fmt = types.array(types.u8, (2, 3))
+        arr_fmt = types.array(types.u8, dims=(2, 3))
         result, tree = fmtspec.decode_inspect(b"\x01\x02\x03\x04\x05\x06", arr_fmt)
 
         assert result == [[1, 2, 3], [4, 5, 6]]
@@ -915,7 +915,7 @@ class TestArrayInspect:
         """Test inspection of array nested in a mapping."""
         fmt = {
             "count": types.u8,
-            "data": types.array(types.u16be, 2),
+            "data": types.array(types.u16be, dims=2),
         }
         obj = {"count": 2, "data": [0x0102, 0x0304]}
         data, tree = fmtspec.encode_inspect(obj, fmt)
@@ -940,7 +940,7 @@ class TestArrayInspect:
         """Test inspection of array nested in a mapping decode."""
         fmt = {
             "count": types.u8,
-            "data": types.array(types.u16be, 2),
+            "data": types.array(types.u16be, dims=2),
         }
         result, tree = fmtspec.decode_inspect(b"\x02\x01\x02\x03\x04", fmt)
 
@@ -955,7 +955,7 @@ class TestArrayInspect:
 
     def test_array_format_tree_output(self):
         """Test format_tree output with array."""
-        arr_fmt = types.array(types.u8, 3)
+        arr_fmt = types.array(types.u8, dims=3)
         _, tree = fmtspec.encode_inspect([1, 2, 3], arr_fmt)
         output = fmtspec.format_tree(tree)
 
