@@ -193,7 +193,7 @@ _BIN_BY_TAG = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MsgPack:
     """MessagePack serialization format using composed fmtspec.types."""
 
@@ -213,16 +213,17 @@ class MsgPack:
     # _array_by_tag: dict[int, types.Array] = field(
     #     init=False, repr=False, compare=False, default_factory=dict
     # )
-    _keysafe: Self = field(init=False, repr=False, compare=False)
+    _keysafe: Self | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        keysafe = self
-        if self.array_type is not tuple and self.array_type is not tuple:
-            # conditionalize to avoid infinite recursion
+        if self.array_type is tuple and self.array_type is tuple:
+            # `self` already keysafe, avoid infinite recursion
+            keysafe = None
+        else:
             keysafe = self.__class__(
-                self.float_precision,
-                tuple,
-                tuple,
+                float_precision=self.float_precision,
+                array_type=tuple,
+                map_type=tuple,
             )
         object.__setattr__(self, "_keysafe", keysafe)
         object.__setattr__(
@@ -245,7 +246,7 @@ class MsgPack:
 
     def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:  # noqa: PLR0912
         """Encode a Python value to MessagePack format."""
-        # fast checks for performance
+        # perf: fast type checks
         t = type(value)
         if t is NoneType:
             stream.write(b"\xc0")
@@ -294,14 +295,14 @@ class MsgPack:
         elif n <= 0xFFFF:
             stream.write(b"\xdc")
             # self._array_by_tag[ARRAY16].encode(value, stream, context=context)
-            # don't use fmtspec.types.array here for performance
+            # perf: don't use fmtspec.types.array here
             start = stream.tell()
             types.u16.encode(n, stream)
             context.inspect_leaf(stream, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdd")
             # self._array_by_tag[ARRAY32].encode(value, stream, context=context)
-            # don't use fmtspec.types.array here for performance
+            # perf: don't use fmtspec.types.array here
             start = stream.tell()
             types.u32.encode(n, stream)
             context.inspect_leaf(stream, "--len--", types.u32, n, start)
@@ -322,14 +323,14 @@ class MsgPack:
         elif n <= 0xFFFF:
             stream.write(b"\xde")
             # self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
-            # don't use fmtspec.types.array here for performance
+            # perf: don't use fmtspec.types.array here
             start = stream.tell()
             types.u16.encode(n, stream)
             context.inspect_leaf(stream, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdf")
             # self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
-            # don't use fmtspec.types.array here for performance
+            # perf: don't use fmtspec.types.array here
             start = stream.tell()
             types.u32.encode(n, stream)
             context.inspect_leaf(stream, "--len--", types.u32, n, start)
@@ -369,15 +370,15 @@ class MsgPack:
             result = tag  # positive fixint
         elif tag <= 0x8F:
             # fixmap
-            # don't use fmtspec.types.array for performance
+            # perf: don't use fmtspec.types.array
             result = self.map_type(self._decode_map(stream, context, tag & 0x0F))
         elif tag <= 0x9F:
             # fixarray
-            # don't use fmtspec.types.array for performance
+            # perf: don't use fmtspec.types.array
             result = self.array_type(self._decode_array(stream, context, tag & 0x0F))
         elif tag <= 0xBF:
             # result = types.Str(tag & 0x1F).decode(stream)
-            # don't use fmtspec.types.Str for performance
+            # perf: don't use fmtspec.types.Str
             result = stream.read(tag & 0x1F).decode("utf-8")  # fixstr
         elif tag >= 0xE0:
             result = tag - 256  # negative fixint
@@ -401,6 +402,12 @@ class MsgPack:
             yield item
             # context.pop_path()
 
+    def _keysafe_decode(self, stream: BinaryIO, *, context: Context) -> Any:
+        if self._keysafe:
+            # use self._keysafe type if not already keysafe
+            return self._keysafe.decode(stream, context=context)
+        return self.decode(stream, context=context)
+
     def _decode_map(self, stream: BinaryIO, context: Context, n: int):
         for i in range(n):
             # context.push_path(i)
@@ -408,8 +415,8 @@ class MsgPack:
                 with context.inspect_scope(stream, i, self, None) as node:
                     # context.push_path("key")
                     with context.inspect_scope(stream, None, self, None) as key_node:
-                        # use self._keysafe on decode
-                        k = self._keysafe.decode(stream, context=context)
+                        # use self._keysafe_decode for keys
+                        k = self._keysafe_decode(stream, context=context)
                         if key_node:
                             key_node.value = k
                     # context.pop_path()
@@ -422,7 +429,8 @@ class MsgPack:
                     if node:
                         node.value = k, v
             else:
-                k = self._keysafe.decode(stream, context=context)
+                # use self._keysafe_decode for keys
+                k = self._keysafe_decode(stream, context=context)
                 v = self.decode(stream, context=context)
             # if value_node:
             #     value_node.value = v
