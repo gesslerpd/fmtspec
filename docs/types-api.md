@@ -91,6 +91,26 @@ Other parameters:
 
 This is the standard tool for length-prefixed payloads, fixed-width payload slots, and padded protocol bodies.
 
+**TLS Client Hello Example: Cipher Suites**
+
+TLS uses `Sized` to wrap variable-length arrays in protocol messages. The cipher
+suites in a TLS Client Hello are prefixed with a 2-byte length (in bytes) followed
+by an array of 2-byte cipher suite values:
+
+```python
+from fmtspec import decode, encode, types
+
+# Cipher suites: 2-byte length prefix, then u16 values (repeated as many as fit)
+cipher_suites_fmt = types.Sized(length=types.u16, fmt=types.array(types.u16))
+
+cipher_suites = [0x1301, 0x1302, 0x1303]  # TLS 1.3 cipher suites
+data = encode(cipher_suites, cipher_suites_fmt)
+# Result: b"\x00\x06\x13\x01\x13\x02\x13\x03"
+#         length: 6 bytes for 3 u16 values, then the suites
+
+assert decode(data, cipher_suites_fmt) == cipher_suites
+```
+
 ### `TakeUntil(fmt, terminator, max_size=None)`
 
 Repeatedly encode or decode `fmt` values until a terminator byte sequence is reached.
@@ -129,6 +149,32 @@ Examples:
 - `types.array(types.u16, (2, 3))` for a fixed 2x3 matrix
 - `types.array(types.u8)` for a greedy array
 
+**TLS Client Hello Example: Extensions Array**
+
+TLS Client Hello messages include a variable-length array of extensions. Each
+extension is a nested mapping, and the entire array is length-prefixed with a
+2-byte length field:
+
+```python
+from fmtspec import decode, encode, types
+
+extension_fmt = {
+    "type": types.u16,
+    "body": types.Sized(length=types.u16, fmt=types.Bytes()),  # extension body
+}
+
+# Extensions array: 2-byte length prefix, then variable number of extension records
+extensions_fmt = types.Sized(length=types.u16, fmt=types.array(extension_fmt))
+
+extensions = [
+    {"type": 0x0000, "body": b"...sni_data..."},
+    {"type": 0x0010, "body": b"...alpn_data..."},
+]
+
+data = encode(extensions, extensions_fmt)
+assert decode(data, extensions_fmt) == extensions
+```
+
 ## Dynamic and Referential Types
 
 ### `Ref(key, parent=1, cast=None)`
@@ -159,6 +205,61 @@ assert decode(encode({"kind": 1, "body": 5}, fmt), fmt)["body"] == 5
 ```
 
 Practical note: `Switch(...)` works best when the selected branch is already bounded by the surrounding format or is naturally the trailing part of a structure.
+
+**TLS Client Hello Example: Extension Dispatch**
+
+TLS extensions use a type tag to select how to parse the extension body. Different
+extension types (SNI, ALPN, etc.) have entirely different payload structures.
+`Switch` with `Ref` enables this dynamic dispatch:
+
+```python
+from fmtspec import decode, encode, types
+
+# SNI extension: array of {name_type: u8, host_name: length-prefixed bytes}
+sni_fmt = types.Sized(
+    length=types.u16,
+    fmt=types.array({
+        "name_type": types.u8,
+        "host_name": types.Sized(length=types.u16, fmt=types.Bytes()),
+    })
+)
+
+# ALPN extension: array of {protocol_name: length-prefixed bytes}
+alpn_fmt = types.Sized(
+    length=types.u16,
+    fmt=types.array(types.Sized(length=types.u8, fmt=types.Bytes()))
+)
+
+EXT_SNI = 0x0000
+EXT_ALPN = 0x0010
+
+# Extension with type-driven dispatch
+extension_fmt = {
+    "type": types.u16,
+    "body": types.Sized(
+        length=types.u16,
+        fmt=types.Switch(
+            key=types.Ref("type"),  # backward reference to the type field
+            cases={
+                EXT_SNI: sni_fmt,
+                EXT_ALPN: alpn_fmt,
+            },
+            default=types.bytes_,  # unknown extensions return raw bytes
+        ),
+    ),
+}
+
+# Encode an SNI extension
+sni_extension = {
+    "type": EXT_SNI,
+    "body": [{"name_type": 0, "host_name": b"example.com"}],
+}
+data = encode(sni_extension, extension_fmt)
+
+# Decode automatically dispatches to the SNI format based on the type field
+result = decode(data, extension_fmt)
+assert result["body"] == [{"name_type": 0, "host_name": b"example.com"}]
+```
 
 ### `TaggedUnion(tag, fmt_map=...)`
 

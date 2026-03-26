@@ -31,7 +31,7 @@ Decode a byte buffer into Python values.
 
 - `fmt` defines the wire layout.
 - `shape` converts decoded builtins into a typed result and can also drive format derivation when `fmt` is omitted.
-- `strict=True` raises `DecodeError` if any trailing bytes remain after a successful decode.
+- `strict=True` raises `DecodeError` if any trailing bytes remain after a successful decode. This is useful in protocol parsing where extra bytes indicate a malformed or truncated message rather than valid trailing data to be ignored.
 
 ```python
 from dataclasses import dataclass
@@ -39,26 +39,29 @@ from typing import Annotated
 
 from fmtspec import DecodeError, decode, types
 
-STR_FMT = types.TakeUntil(types.str_utf8, b"\0")
-INT_FMT = types.u32le
-
-
 @dataclass(frozen=True, slots=True)
 class Record:
-    name: Annotated[str, STR_FMT]
-    count: Annotated[int, INT_FMT]
+    name: Annotated[str, types.TakeUntil(types.str_utf8, b"\0")]
+    count: Annotated[int, types.u32le]
+
 
 
 record = decode(b"widget\0\x03\x00\x00\x00", shape=Record)
 assert record == Record(name="widget", count=3)
 
+# With strict=True, extra bytes raise DecodeError
+assert decode(b"\x00\x2a", types.u16, strict=True) == 42
+
 try:
     decode(b"\x00\x2a\xff", types.u16, strict=True)
 except DecodeError:
     pass
+
+# With strict=False (default), extra bytes are silently ignored
+assert decode(b"\x00\x2a\xff", types.u16) == 42
 ```
 
-### `encode_stream(obj, stream, fmt=None) -> None`
+### `encode_stream(stream, obj, fmt=None) -> None`
 
 Encode directly into a file-like object.
 
@@ -68,7 +71,7 @@ Use this for files, sockets, or `BytesIO` when you do not want to allocate an in
 
 Decode directly from a file-like object.
 
-This is the streaming counterpart to `decode(...)`. Unlike `decode(...)`, it does not have a `strict` flag. If you need to verify that a buffer was fully consumed, use `decode(..., strict=True)`.
+This is the streaming counterpart to `decode(...)`. Unlike `decode(...)`, it does not have a `strict` flag. If you need to verify that a buffer was fully consumed, use `decode(..., strict=True)` instead.
 
 ## Format Derivation and Size Information
 
@@ -142,6 +145,8 @@ Decode and return both the result and the root inspection node.
 
 Render an inspection tree as readable text.
 
+For a simple structure:
+
 ```python
 from fmtspec import encode_inspect, format_tree, types
 
@@ -150,6 +155,32 @@ data, tree = encode_inspect({"x": 1, "y": 0x0203}, fmt)
 
 assert data == b"\x01\x02\x03"
 print(format_tree(tree))
+```
+
+For complex nested protocols like TLS, inspection reveals the full structure at
+each nesting level:
+
+```python
+from fmtspec import encode_inspect, format_tree, types
+
+# TLS Client Hello format with version, random, and cipher suites
+version_fmt = {"major": types.u8, "minor": types.u8}
+cipher_suites_fmt = types.Sized(length=types.u16, fmt=types.array(types.u16))
+
+tls_fmt = {
+    "version": version_fmt,
+    "random": types.Bytes(32),
+    "cipher_suites": cipher_suites_fmt,
+}
+
+client_hello = {
+    "version": {"major": 3, "minor": 3},
+    "random": b"\x00" * 32,
+    "cipher_suites": [0x1301, 0x1302],
+}
+
+data, tree = encode_inspect(client_hello, tls_fmt)
+print(format_tree(tree))  # Shows nesting, offsets, values at each level
 ```
 
 Use the formatting options when you need a narrower view:
@@ -183,7 +214,7 @@ See [stream-api.md](stream-api.md) for the standard custom-type pattern.
 Protocol implemented by fmtspec-compatible format objects.
 
 ```python
-def encode(self, value, stream, *, context: Context) -> None: ...
+def encode(self, stream, value, *, context: Context) -> None: ...
 def decode(self, stream, *, context: Context) -> Any: ...
 ```
 

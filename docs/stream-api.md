@@ -6,7 +6,7 @@ For normal application code, prefer the top-level `fmtspec.encode_stream(...)` a
 
 ## `fmtspec.stream`
 
-### `encode_stream(obj, fmt, stream, *, context, key=None) -> None`
+### `encode_stream(stream, obj, fmt, *, context, key=None) -> None`
 
 Delegate nested encoding back into fmtspec while preserving the current `Context`.
 
@@ -90,13 +90,13 @@ from fmtspec.stream import decode_stream, encode_stream
 class MyType:
     size = ...
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         header_start = stream.tell()
         self.header_fmt.encode(len(value), stream, context=context)
         context.inspect_leaf(stream, "length", self.header_fmt, len(value), header_start)
 
         with context.inspect_scope(stream, "payload", self.payload_fmt, value) as node:
-            encode_stream(value, self.payload_fmt, stream, context=context, key="payload")
+            encode_stream(stream, value, self.payload_fmt, context=context, key="payload")
             if node:
                 node.value = value
 
@@ -117,3 +117,21 @@ class MyType:
 - Frame-based protocols often write a small header manually, then delegate the payload to `encode_stream(...)` and `decode_stream(...)`.
 - TLV-style formats often combine `read_exactly(...)`, `write_all(...)`, and `inspect_leaf(...)` for tags and lengths.
 - Recursive or tree-like encodings often use `inspect_scope(...)` so the inspection output reflects logical structure instead of only raw byte operations.
+
+## Real-World Example: Streaming TLS Client Hello
+
+The [README](../README.md) contains the full in-memory TLS Client Hello walkthrough. This section shows the same shape being sent through `encode_stream` and `decode_stream` instead of a byte buffer.
+
+```python
+from io import BytesIO
+
+from fmtspec import decode_stream, encode_stream, types
+
+# Reuse the TLS Client Hello format and sample object from the README example.
+stream = BytesIO()
+encode_stream(stream, client_hello, tls_client_hello_fmt)
+
+stream.seek(0)
+result = decode_stream(stream, tls_client_hello_fmt)
+assert result == client_hello
+```

@@ -1,8 +1,33 @@
 [project]
 name = "fmtspec"
-version = "0.3.0"
+version = "0.4.0"
 description = "A flexible binary format serialization library for Python"
 readme = "README.md"
+classifiers = [
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+    "Development Status :: 4 - Beta",
+    "Topic :: System :: Networking",
+    "Topic :: File Formats",
+]
+keywords = [
+    "serialization",
+    "deserialization",
+    "encoding",
+    "decoding",
+    "binary",
+    "formats",
+    "protocols",
+    "wire",
+    "packets",
+    "parsing",
+    "msgpack",
+    "msgspec",
+    "dataclasses",
+    "inspection",
+    "stream",
+    "streaming",
+]
 authors = [
     { name = "Peter Gessler", email = "gesslerpd@users.noreply.github.com" }
 ]
