@@ -286,18 +286,18 @@ def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
 
 @overload
 def _encode_stream_impl(
-    obj: Any, stream: BinaryIO, fmt: Format | None, *, inspect: Literal[False] = False
+    stream: BinaryIO, obj: Any, fmt: Format | None, *, inspect: Literal[False] = False
 ) -> None: ...
 
 
 @overload
 def _encode_stream_impl(
-    obj: Any, stream: BinaryIO, fmt: Format | None, *, inspect: Literal[True]
+    stream: BinaryIO, obj: Any, fmt: Format | None, *, inspect: Literal[True]
 ) -> InspectNode: ...
 
 
 def _encode_stream_impl(
-    obj: Any, stream: BinaryIO, fmt: Format | None = None, *, inspect: bool = False
+    stream: BinaryIO, obj: Any, fmt: Format | None = None, *, inspect: bool = False
 ) -> InspectNode | None:
     # Convert iterators to lists first since msgspec.to_builtins doesn't support them
     if isinstance(obj, Iterator):
@@ -319,7 +319,7 @@ def _encode_stream_impl(
 
     try:
         # specify key=None for root node
-        tree = _encode_stream(obj, fmt, stream, context=ctx, key=None)
+        tree = _encode_stream(stream, obj, fmt, context=ctx, key=None)
     except EncodeError as e:  # pragma: no cover
         assert_never(e)  # type: ignore
         raise
@@ -342,7 +342,7 @@ def _encode_stream_impl(
     return tree
 
 
-def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None:
+def encode_stream(stream: BinaryIO, obj: Any, fmt: Format | None = None) -> None:
     """Encode a value directly into stream.
 
     If ``fmt`` is omitted, fmtspec attempts to derive it from ``obj``.
@@ -351,11 +351,11 @@ def encode_stream(obj: Any, stream: BinaryIO, fmt: Format | None = None) -> None
         >>> from io import BytesIO
         >>> from fmtspec import encode_stream, types
         >>> stream = BytesIO()
-        >>> encode_stream(7, stream, types.u16)
+        >>> encode_stream(stream, 7, types.u16)
         >>> stream.getvalue()
         b'\x00\x07'
     """
-    _encode_stream_impl(obj, stream, fmt, inspect=False)
+    _encode_stream_impl(stream, obj, fmt, inspect=False)
 
 
 @overload
@@ -490,7 +490,7 @@ def encode(obj: Any, fmt: Format | None = None) -> bytes:
         b'\x00\x07'
     """
     stream = BytesIO()
-    encode_stream(obj, stream, fmt=fmt)
+    encode_stream(stream, obj, fmt=fmt)
     return stream.getvalue()
 
 

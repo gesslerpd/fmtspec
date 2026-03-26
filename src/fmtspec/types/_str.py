@@ -17,7 +17,7 @@ class Str:
     size: int | None = None
     encoding: str = "utf-8"
 
-    def encode(self, value: str, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: str, **_: Any) -> None:
         data = value.encode(self.encoding)
         if self.size is not None and len(data) != self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(data)}")

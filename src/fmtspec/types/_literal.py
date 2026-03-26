@@ -32,7 +32,7 @@ class Literal:
         """The byte size of the literal value."""
         return len(self.value)
 
-    def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: Any, **_: Any) -> None:
         """Write the literal bytes to stream. Value is ignored."""
         if self.strict and value is not None and value != self.value:
             raise ValueError(f"Expected {self.value!r}, got {value!r}")
@@ -54,7 +54,7 @@ class Null:
     constant: ClassVar[bool] = True
     size: ClassVar[int] = 0
 
-    def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:  # noqa: ARG002
+    def encode(self, stream: BinaryIO, value: Any, **_: Any) -> None:  # noqa: ARG002
         assert value is None
 
     def decode(self, stream: BinaryIO, **_: Any) -> None:  # noqa: ARG002

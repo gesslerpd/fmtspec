@@ -98,7 +98,7 @@ class InspectNode(Struct, kw_only=True, gc=False):
 #     @value.setter
 #     def value(self, value: Any) -> None:
 #         stream = BytesIO()
-#         encode_stream(value, stream, self.fmt)
+#         encode_stream(stream, value, self.fmt)
 #         self.buffer[:] = stream.getbuffer()
 
 
@@ -207,7 +207,7 @@ class Context(Struct, gc=False):
             >>> stream = BytesIO()
             >>> ctx = Context(inspect=True)
             >>> start = stream.tell()
-            >>> types.u8.encode(7, stream, context=ctx)
+            >>> types.u8.encode(stream, 7, context=ctx)
             >>> ctx.inspect_leaf(stream, "count", types.u8, 7, start)
             >>> ctx.inspect_children[0].key
             'count'
@@ -256,7 +256,7 @@ class Context(Struct, gc=False):
             >>> stream = BytesIO()
             >>> ctx = Context(inspect=True)
             >>> with ctx.inspect_scope(stream, "payload", types.bytes_, b"abc") as node:
-            ...     types.bytes_.encode(b"abc", stream, context=ctx)
+            ...     types.bytes_.encode(stream, b"abc", context=ctx)
             >>> node.size
             3
 
@@ -279,7 +279,7 @@ class Type(Protocol):
               runtime_checkable limitations with property variance.
     """
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         """Write ``value`` to ``stream`` using this format."""
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:

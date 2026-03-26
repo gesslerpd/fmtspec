@@ -16,7 +16,7 @@ class Bytes:
 
     size: int | None = None
 
-    def encode(self, value: bytes, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: bytes, **_: Any) -> None:
         if self.size is not None and len(value) != self.size:
             raise ValueError(f"Expected {self.size} bytes, got {len(value)}")
         write_all(stream, value)

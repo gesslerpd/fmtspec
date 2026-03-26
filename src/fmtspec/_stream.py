@@ -76,9 +76,9 @@ DEFAULT_KEY = None
 
 
 def _encode_stream(  # noqa: PLR0912
+    stream: BinaryIO,
     obj: Any,
     fmt: Format,
-    stream: BinaryIO,
     *,
     context: Context,
     key: str | int | None = DEFAULT_KEY,
@@ -100,7 +100,7 @@ def _encode_stream(  # noqa: PLR0912
         # perf: prefer attribute/type checks over `isinstance` against Protocol
         encode_fn = getattr(fmt, "encode", None)
         if encode_fn:
-            encode_fn(obj, stream, context=context)
+            encode_fn(stream, obj, context=context)
 
         # perf: use type check for common case of dict
         elif fmt_type is dict or isinstance(fmt, Mapping):
@@ -138,7 +138,7 @@ def _encode_stream(  # noqa: PLR0912
                     else:
                         value = obj[inner_key]
                 context.push_path(inner_key)
-                _encode_stream(value, _field_fmt, stream, context=context, key=inner_key)
+                _encode_stream(stream, value, _field_fmt, context=context, key=inner_key)
                 context.pop_path()
             context.pop()
 
@@ -146,7 +146,7 @@ def _encode_stream(  # noqa: PLR0912
         elif fmt_type is list or fmt_type is tuple or isinstance(fmt, Iterable):
             for idx, (value, field_fmt) in enumerate(zip(obj, fmt, strict=True)):
                 context.push_path(idx)
-                _encode_stream(value, field_fmt, stream, context=context, key=idx)
+                _encode_stream(stream, value, field_fmt, context=context, key=idx)
                 context.pop_path()
 
         else:

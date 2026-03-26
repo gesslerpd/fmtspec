@@ -93,31 +93,31 @@ def _encode_int(value: int, stream: BinaryIO) -> None:
     # 2-byte encodings
     elif 0x80 <= value <= 0xFF:
         stream.write(b"\xcc")
-        types.u8.encode(value, stream)
+        types.u8.encode(stream, value)
     elif -0x80 <= value < -0x20:
         stream.write(b"\xd0")
-        types.i8.encode(value, stream)
+        types.i8.encode(stream, value)
     # 3-byte encodings
     elif 0x100 <= value <= 0xFFFF:
         stream.write(b"\xcd")
-        types.u16.encode(value, stream)
+        types.u16.encode(stream, value)
     elif -0x8000 <= value < -0x80:
         stream.write(b"\xd1")
-        types.i16.encode(value, stream)
+        types.i16.encode(stream, value)
     # 5-byte encodings
     elif 0x10000 <= value <= 0xFFFFFFFF:
         stream.write(b"\xce")
-        types.u32.encode(value, stream)
+        types.u32.encode(stream, value)
     elif -0x80000000 <= value < -0x8000:
         stream.write(b"\xd2")
-        types.i32.encode(value, stream)
+        types.i32.encode(stream, value)
     # 9-byte encodings
     elif 0x100000000 <= value <= 0xFFFFFFFFFFFFFFFF:
         stream.write(b"\xcf")
-        types.u64.encode(value, stream)
+        types.u64.encode(stream, value)
     elif -0x8000000000000000 <= value < -0x80000000:
         stream.write(b"\xd3")
-        types.i64.encode(value, stream)
+        types.i64.encode(stream, value)
     else:
         raise OverflowError(f"Integer {value} out of msgpack range")
 
@@ -133,13 +133,13 @@ def _encode_str(value: str, stream: BinaryIO, context) -> None:
         stream.write(data)
     elif n <= 0xFF:
         stream.write(b"\xd9")
-        str8.encode(value, stream, context=context)
+        str8.encode(stream, value, context=context)
     elif n <= 0xFFFF:
         stream.write(b"\xda")
-        str16.encode(value, stream, context=context)
+        str16.encode(stream, value, context=context)
     else:
         stream.write(b"\xdb")
-        str32.encode(value, stream, context=context)
+        str32.encode(stream, value, context=context)
 
 
 def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
@@ -147,13 +147,13 @@ def _encode_bin(value: bytes, stream: BinaryIO, context) -> None:
     n = len(value)
     if n <= 0xFF:
         stream.write(b"\xc4")
-        bin8.encode(value, stream, context=context)
+        bin8.encode(stream, value, context=context)
     elif n <= 0xFFFF:
         stream.write(b"\xc5")
-        bin16.encode(value, stream, context=context)
+        bin16.encode(stream, value, context=context)
     else:
         stream.write(b"\xc6")
-        bin32.encode(value, stream, context=context)
+        bin32.encode(stream, value, context=context)
 
 
 # =============================================================================
@@ -244,7 +244,7 @@ class MsgPack:
         # self._array_by_tag[ARRAY16] = types.array(self, dims=types.u16)
         # self._array_by_tag[ARRAY32] = types.array(self, dims=types.u32)
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:  # noqa: PLR0912
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:  # noqa: PLR0912
         """Encode a Python value to MessagePack format."""
         # perf: fast type checks
         t = type(value)
@@ -256,7 +256,7 @@ class MsgPack:
             _encode_int(value, stream)
         elif t is float:
             stream.write(BYTES[self._float_tag])
-            self._float_type.encode(value, stream)
+            self._float_type.encode(stream, value)
         elif t is str:
             _encode_str(value, stream, context)
         elif t is bytes or t is bytearray or t is memoryview:
@@ -275,7 +275,7 @@ class MsgPack:
             _encode_int(value, stream)
         elif issubclass(t, float):
             stream.write(BYTES[self._float_tag])
-            self._float_type.encode(value, stream)
+            self._float_type.encode(stream, value)
         elif issubclass(t, str):
             _encode_str(value, stream, context)
         elif issubclass(t, (bytes, bytearray, memoryview)):
@@ -294,26 +294,26 @@ class MsgPack:
             stream.write(BYTES[0x90 | n])
         elif n <= 0xFFFF:
             stream.write(b"\xdc")
-            # self._array_by_tag[ARRAY16].encode(value, stream, context=context)
+            # self._array_by_tag[ARRAY16].encode(stream, value, context=context)
             # perf: don't use fmtspec.types.array here
             start = stream.tell()
-            types.u16.encode(n, stream)
+            types.u16.encode(stream, n)
             context.inspect_leaf(stream, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdd")
-            # self._array_by_tag[ARRAY32].encode(value, stream, context=context)
+            # self._array_by_tag[ARRAY32].encode(stream, value, context=context)
             # perf: don't use fmtspec.types.array here
             start = stream.tell()
-            types.u32.encode(n, stream)
+            types.u32.encode(stream, n)
             context.inspect_leaf(stream, "--len--", types.u32, n, start)
 
         for i, item in enumerate(value):
             # context.push_path(i)
             if context.inspect:
                 with context.inspect_scope(stream, i, self, item):
-                    self.encode(item, stream, context=context)
+                    self.encode(stream, item, context=context)
             else:
-                self.encode(item, stream, context=context)
+                self.encode(stream, item, context=context)
             # context.pop_path()
 
     def _encode_map(self, value: dict, stream: BinaryIO, context: Context) -> None:
@@ -325,14 +325,14 @@ class MsgPack:
             # self._map_by_tag[MAP16].encode(value.items(), stream, context=context)
             # perf: don't use fmtspec.types.array here
             start = stream.tell()
-            types.u16.encode(n, stream)
+            types.u16.encode(stream, n)
             context.inspect_leaf(stream, "--len--", types.u16, n, start)
         else:
             stream.write(b"\xdf")
             # self._map_by_tag[MAP32].encode(value.items(), stream, context=context)
             # perf: don't use fmtspec.types.array here
             start = stream.tell()
-            types.u32.encode(n, stream)
+            types.u32.encode(stream, n)
             context.inspect_leaf(stream, "--len--", types.u32, n, start)
 
         # perf: don't use enumerate
@@ -344,15 +344,15 @@ class MsgPack:
                     # context.push_path("key")
                     with context.inspect_scope(stream, None, self, k):
                         # don't need self._keysafe on encode
-                        self.encode(k, stream, context=context)
+                        self.encode(stream, k, context=context)
                     # context.pop_path()
 
                     # context.push_path("value")
                     with context.inspect_scope(stream, k, self, v):
-                        self.encode(v, stream, context=context)
+                        self.encode(stream, v, context=context)
             else:
-                self.encode(k, stream, context=context)
-                self.encode(v, stream, context=context)
+                self.encode(stream, k, context=context)
+                self.encode(stream, v, context=context)
             # context.pop_path()
 
             # context.pop_path()

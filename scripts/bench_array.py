@@ -44,7 +44,7 @@ def decode_file(f, fmt) -> None:
 
 
 def encode_file(f, value, fmt) -> None:
-    encode_stream(value, f, fmt=fmt)
+    encode_stream(f, value, fmt=fmt)
 
 
 def main() -> None:

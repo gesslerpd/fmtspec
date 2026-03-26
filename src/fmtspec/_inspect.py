@@ -47,7 +47,7 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
     """
     stream = BytesIO()
     try:
-        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, obj, fmt, inspect=True)
     except EncodeError as exc:
         assert exc.inspect_node is not None  # noqa: PT017
         _attach_buffer_tree(exc.inspect_node, stream.getbuffer())

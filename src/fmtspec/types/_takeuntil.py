@@ -30,8 +30,8 @@ class TakeUntil:
         if not self.terminator:
             raise ValueError("terminator must not be empty")
 
-    def encode(self, value: Any, stream: BinaryIO, **_: Any) -> None:
-        self.fmt.encode(value, stream, **_)
+    def encode(self, stream: BinaryIO, value: Any, **_: Any) -> None:
+        self.fmt.encode(stream, value, **_)
         write_all(stream, self.terminator)
 
     def decode(self, stream: BinaryIO, **_: Any) -> Any:

@@ -63,9 +63,9 @@ class Sized:
         if pad_len % unit != 0 or padding != self.fill * (pad_len // unit):
             raise ValueError("Invalid or missing padding bytes after sized field")
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         buf = BytesIO()
-        encode_stream(value, self.fmt, buf, context=context)
+        encode_stream(buf, value, self.fmt, context=context)
         encoded = buf.getvalue()
         n = len(encoded)
 
@@ -96,7 +96,7 @@ class Sized:
             raise ValueError(f"Encoded length {n} is not divisible by factor {self.factor}")
         length_value = n // self.factor
         start = stream.tell()
-        self.length.encode(length_value, stream, context=context)
+        self.length.encode(stream, length_value, context=context)
         context.inspect_leaf(
             stream,
             "--size--",

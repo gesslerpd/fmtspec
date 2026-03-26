@@ -55,8 +55,8 @@ class Bitfield:
 
     # implement Type interface so this can be used directly
     # FUTURE: see if this can be garbage collected or make weak `self` reference
-    def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
-        return Bitfields(fields={"": self}).encode({"": value}, stream, **_)
+    def encode(self, stream: BinaryIO, value: int, **_: Any) -> None:
+        return Bitfields(fields={"": self}).encode(stream, {"": value}, **_)
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
         return Bitfields(fields={"": self}).decode(stream, **_)[""]
@@ -171,10 +171,10 @@ class Bitfields:
             int_val |= val << self._offsets[name]
         return int_val
 
-    def encode(self, value: dict[str, int], stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: dict[str, int], **_: Any) -> None:
         # start = stream.tell()
         int_val = self.encode_int(value)
-        self._int_type.encode(int_val, stream, **_)
+        self._int_type.encode(stream, int_val, **_)
         # self._inspect_fields(value, stream, context, start)
 
     def _decode_bitfield(self, bitfield: Bitfield, name: str, int_val: int) -> int:

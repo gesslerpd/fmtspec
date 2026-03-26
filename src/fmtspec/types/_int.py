@@ -56,7 +56,7 @@ class Int:
             # less performant fallback for large integers
             object.__setattr__(self, "_struct", _Struct(self.byteorder, self.signed, self.size))
 
-    def encode(self, value: int, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: int, **_: Any) -> None:
         # FUTURE: use the pack_into method for efficiency?
         # FUTURE: validate enum membership? or warn about it? strict mode?
         # if self.enum and value not in self.enum:

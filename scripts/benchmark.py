@@ -77,13 +77,13 @@ def main() -> None:
     # obj = DataclassBench(key="value", number=42)
     # bench(
     #     "encode: small dataclass",
-    #     lambda: encode_stream(obj, io.BytesIO()),
+    #     lambda: encode_stream(io.BytesIO(), obj),
     #     args.iterations,
     #     args.repeats,
     # )
 
     # buf = io.BytesIO()
-    # encode_stream(obj, buf)
+    # encode_stream(buf, obj)
     # bench(
     #     "decode: small dataclass (derive shape)",
     #     lambda: (buf.seek(0), decode_stream(buf, shape=DataclassBench)),
@@ -95,12 +95,12 @@ def main() -> None:
     # nested = NestedBench(data=obj, more=DataclassBench(key="other", number=7))
     # bench(
     #     "encode: nested dataclass",
-    #     lambda: encode_stream(nested, io.BytesIO()),
+    #     lambda: encode_stream(io.BytesIO(), nested),
     #     args.iterations,
     #     args.repeats,
     # )
     # nbuf = io.BytesIO()
-    # encode_stream(nested, nbuf)
+    # encode_stream(nbuf, nested)
     # bench(
     #     "decode: nested dataclass",
     #     lambda: (nbuf.seek(0), decode_stream(nbuf, shape=NestedBench)),
@@ -113,12 +113,12 @@ def main() -> None:
     # arr = list(range(args.list_size))
     # bench(
     #     "encode: int array",
-    #     lambda: encode_stream(arr, io.BytesIO(), fmt=array_fmt),
+    #     lambda: encode_stream(io.BytesIO(), arr, fmt=array_fmt),
     #     args.iterations,
     #     args.repeats,
     # )
     # arr_buf = io.BytesIO()
-    # encode_stream(arr, arr_buf, fmt=array_fmt)
+    # encode_stream(arr_buf, arr, fmt=array_fmt)
     # bench(
     #     "decode: int array",
     #     lambda: (arr_buf.seek(0), decode_stream(arr_buf, fmt=array_fmt)),

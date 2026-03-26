@@ -43,10 +43,10 @@ class Lazy:
 
     get_format: Callable[[], Format]
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         """Encode by delegating to the lazily-resolved format."""
         fmt = self.get_format()
-        _encode_stream(value, fmt, stream, context=context)
+        _encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode by delegating to the lazily-resolved format."""

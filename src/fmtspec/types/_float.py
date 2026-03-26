@@ -25,7 +25,7 @@ class Float:
         precision = "f" if self.size == FLOAT32_SIZE else "d"
         object.__setattr__(self, "_struct", struct.Struct(f"{endian}{precision}"))
 
-    def encode(self, value: float, stream: BinaryIO, **_: Any) -> None:
+    def encode(self, stream: BinaryIO, value: float, **_: Any) -> None:
         # FUTURE: use the pack_into method for efficiency?
         write_all(stream, self._struct.pack(value))
 

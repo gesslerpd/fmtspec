@@ -12,9 +12,9 @@ if TYPE_CHECKING:
 
 
 def encode_stream(
+    stream: BinaryIO,
     obj: Any,
     fmt: Format,
-    stream: BinaryIO,
     *,
     context: Context,
     key: str | int | None = None,
@@ -24,7 +24,7 @@ def encode_stream(
     This is the public low-level entry point for custom format implementations
     that need to delegate part of their work back to fmtspec's traversal engine.
     """
-    _encode_stream(obj, fmt, stream, context=context, key=key)
+    _encode_stream(stream, obj, fmt, context=context, key=key)
 
 
 def decode_stream(

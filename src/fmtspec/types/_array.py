@@ -260,7 +260,7 @@ class Array:
             e_len = dim_def.resolve(context)
         else:
             e_len = None
-            dim_def.encode(len(v), stream, context=context)
+            dim_def.encode(stream, len(v), context=context)
 
         if e_len is not None and len(v) != e_len:
             dim_mismatch = f"Dimension mismatch: expected dims[{idx}]={e_len}, got {len(v)}."
@@ -270,7 +270,7 @@ class Array:
             # Leaf level: encode elements directly
             for i, elem in enumerate(v):
                 context.push_path(i)
-                _encode_stream(elem, elem_fmt, stream, context=context, key=i)
+                _encode_stream(stream, elem, elem_fmt, context=context, key=i)
                 context.pop_path()
         else:
             # Non-leaf level: create intermediate nodes for each sub-array
@@ -280,7 +280,7 @@ class Array:
                     self._encode_level(stream, sub, idx + 1, context)
                 context.pop_path()
 
-    def encode(self, value: list[Any], stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: list[Any], *, context: Context) -> None:
         # Fast-path using precomputed values for 1-D/greedy Int element arrays
         # Skip fast-path when inspecting to capture individual element nodes
         if (typecode := getattr(self, "_fast_typecode", None)) and not context.inspect:
@@ -288,7 +288,7 @@ class Array:
             # prefix_dim = self._fast_prefix_dim
             # if prefix_dim is not None:
             #     count = len(value)
-            #     prefix_dim.encode(count, stream, context=context)
+            #     prefix_dim.encode(stream, count, context=context)
             #     arr = _parray(typecode, value)
             #     if self._fast_byteorder_mismatch and self._fast_elem_size > 1:
             #         arr.byteswap()
@@ -318,7 +318,7 @@ class Array:
         if not self.dims:
             for i, elem in enumerate(value):
                 context.push_path(i)
-                _encode_stream(elem, self.element_fmt, stream, context=context, key=i)
+                _encode_stream(stream, elem, self.element_fmt, context=context, key=i)
                 context.pop_path()
             return
 

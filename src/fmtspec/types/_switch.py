@@ -68,10 +68,10 @@ class Switch:
             raise KeyError(f"Key {key_value!r} not found in cases and no default provided")
         return fmt
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         key_value = self.key.resolve(context)
         fmt = self._get_fmt(key_value)
-        _encode_stream(value, fmt, stream, context=context)
+        _encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         inner_data = stream.read()
@@ -172,7 +172,7 @@ class TaggedUnion:
             return self.tag.resolve(context)
         return _decode_stream(stream, self.tag, context=context)[0]
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         unknown_type = ValueError("Unknown type")
         if not isinstance(value, Mapping) or self.struct_tag_field is None:
             raise unknown_type
@@ -186,8 +186,8 @@ class TaggedUnion:
             raise unknown_type
 
         if write_tag:
-            _encode_stream(tag_val, self.tag, stream, context=context)
-        _encode_stream(value, fmt, stream, context=context)
+            _encode_stream(stream, tag_val, self.tag, context=context)
+        _encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         tag = self._decode_tag(stream, context=context)

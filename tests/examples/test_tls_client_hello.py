@@ -1,12 +1,10 @@
 """TLS Client Hello example test.
 
-Based on Kaitai Struct definition for TLS 1.2 Client Hello (RFC 5246).
+Based on TLS 1.2 Client Hello (RFC 5246).
 Demonstrates nested dictionary format maps with the fmtspec framework.
 """
 
 from fmtspec import decode, encode, encode_inspect, format_tree, types
-
-# Format definitions matching Kaitai struct types
 
 # version:
 #   - major: u1

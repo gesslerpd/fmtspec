@@ -25,9 +25,9 @@ class Optional:
 
     fmt: Format
 
-    def encode(self, value: Any, stream: BinaryIO, *, context: Context) -> None:
+    def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         if value is not None:
-            _encode_stream(value, self.fmt, stream, context=context)
+            _encode_stream(stream, value, self.fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         try:

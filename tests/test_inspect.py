@@ -484,7 +484,7 @@ class TestEncodeInspectStream:
         """Test stream inspection of a simple integer type."""
         fmt = types.Int(byteorder="big", signed=False, size=2)
         stream = BytesIO()
-        tree = _encode_stream_impl(0x0102, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, 0x0102, fmt, inspect=True)
 
         # Verify stream contains encoded data
         assert stream.getvalue() == b"\x01\x02"
@@ -504,7 +504,7 @@ class TestEncodeInspectStream:
         }
         obj = {"x": 0x01, "y": 0x0203}
         stream = BytesIO()
-        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, obj, fmt, inspect=True)
 
         assert stream.getvalue() == b"\x01\x02\x03"
         assert tree.key is None
@@ -543,7 +543,7 @@ class TestEncodeInspectStream:
         }
         obj = {"header": {"version": 1, "flags": 2}, "data": 0x0304}
         stream = BytesIO()
-        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, obj, fmt, inspect=True)
 
         assert stream.getvalue() == b"\x01\x02\x03\x04"
         assert tree.size == 4
@@ -561,7 +561,7 @@ class TestEncodeInspectStream:
         stream.write(b"\xff\xff")  # Write some initial data
         start_pos = stream.tell()
 
-        tree = _encode_stream_impl(0x0102, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, 0x0102, fmt, inspect=True)
 
         # Stream should be positioned after the written data
         assert stream.tell() == start_pos + 2
@@ -583,7 +583,7 @@ class TestEncodeInspectStream:
 
         # Using _encode_stream_impl
         stream = BytesIO()
-        tree2 = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree2 = _encode_stream_impl(stream, obj, fmt, inspect=True)
 
         assert stream.getvalue() == data_bytes
         assert tree1.offset == tree2.offset
@@ -717,7 +717,7 @@ class TestUnseekableStreams:
         # Use unseekable stream
         backing = BytesIO()
         stream = UnseekableStream(backing)
-        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, obj, fmt, inspect=True)
 
         # Verify data was written
         assert backing.getvalue() == b"\x01\x02\x03"
@@ -777,7 +777,7 @@ class TestUnseekableStreams:
         obj = {"header": {"version": 1, "flags": 2}, "data": 0x0304}
         backing = BytesIO()
         stream = UnseekableStream(backing)
-        tree = _encode_stream_impl(obj, stream, fmt, inspect=True)
+        tree = _encode_stream_impl(stream, obj, fmt, inspect=True)
 
         assert tree.size == 4
         with pytest.raises(RuntimeError, match="buffer is not attached"):

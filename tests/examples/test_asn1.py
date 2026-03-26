@@ -86,15 +86,15 @@ TAG_MASK = 0x1F
 class ASN1Tag:
     size: ClassVar[EllipsisType] = ...
 
-    def encode(self, value: tuple[ASN1Class, int, bool], stream, **_) -> None:
+    def encode(self, stream, value: tuple[ASN1Class, int, bool], **_) -> None:
         tag_class, tag, constructed = value
         ASN1_TAG_OCTET.encode(
+            stream,
             {
                 "tag_low": tag & TAG_MASK,
                 "constructed": int(constructed),
                 "tag_class": TagClass[tag_class.name],
             },
-            stream,
         )
         if tag >= TAG_MASK:
             write_all(stream, _encode_base128(tag))
@@ -113,7 +113,7 @@ class ASN1Tag:
 class ASN1Length:
     size: ClassVar[EllipsisType] = ...
 
-    def encode(self, value: int, stream, **_) -> None:
+    def encode(self, stream, value: int, **_) -> None:
         if value < 0:
             raise ValueError("Length must be non-negative")
         if value < 0x80:
@@ -328,7 +328,7 @@ class ASN1:
         child_context = Context(inspect=context.inspect)
         for i, item in enumerate(items):
             with child_context.inspect_scope(buf, i, self, item):
-                self.encode(item, buf, context=child_context)
+                self.encode(buf, item, context=child_context)
 
         return buf.getvalue(), child_context.inspect_children
 
@@ -364,7 +364,7 @@ class ASN1:
         if stream.tell() != end:
             raise ValueError("Constructed value length mismatch")
 
-    def encode(self, value: ASN1Node, stream, *, context: Context) -> None:
+    def encode(self, stream, value: ASN1Node, *, context: Context) -> None:
         tag_class = ASN1Class(value.get("tag_class", ASN1Class.UNIVERSAL))
         tag: int = value["tag"]
         inner_value = value.get("value")
@@ -385,11 +385,11 @@ class ASN1:
 
         tag_start = stream.tell()
         tag_tuple = (tag_class, tag, constructed)
-        ASN1_TAG.encode(tag_tuple, stream, context=context)
+        ASN1_TAG.encode(stream, tag_tuple, context=context)
         context.inspect_leaf(stream, "tag", ASN1_TAG, tag_tuple, tag_start)
 
         length_start = stream.tell()
-        ASN1_LENGTH.encode(len(body), stream, context=context)
+        ASN1_LENGTH.encode(stream, len(body), context=context)
         context.inspect_leaf(stream, "--len--", ASN1_LENGTH, len(body), length_start)
 
         write_all(stream, body)
