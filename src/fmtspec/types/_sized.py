@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import KW_ONLY, dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -35,15 +36,19 @@ class Sized:
 
     length: int | Type | Ref
     fmt: Format
+    _: KW_ONLY
     align: int | None = None
     fill: bytes = b"\x00"
     # FUTURE: allow factor to be 2 callables for encode/decode?
     factor: int = 1
+    inline: bool = False
     size: int | EllipsisType = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.length, int) and self.align:
             raise ValueError("align is not allowed with fixed int length")
+        if self.inline and not isinstance(self.fmt, Mapping):
+            raise ValueError("inline=True requires fmt to be a Mapping")
 
         object.__setattr__(self, "size", self.length if isinstance(self.length, int) else ...)
 

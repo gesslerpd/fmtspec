@@ -3,70 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import TYPE_CHECKING, Any, BinaryIO
+from typing import Any, BinaryIO
+
+from ._protocol import Context, Format, InspectNode
+from ._utils import _group_bitfields
 
 # keep this file stdlib/protocol-only to avoid circular imports
-
-if TYPE_CHECKING:
-    from ._protocol import Context, Format, InspectNode
-    from .types import Bitfields
-
-
-def _collect_bitfield_groups(fmt: Mapping) -> dict[str | int, Bitfields]:
-    """Collect contiguous Bitfield groups from a mapping format.
-
-    Returns a mapping `groups` from the group's start key to a `Bitfields`
-    instance.
-    """
-    # import locally to avoid circular import at module load
-    # TODO: refactor to avoid circular imports
-    from .types import Bitfield, Bitfields  # noqa: PLC0415
-
-    groups = {}
-
-    items_iter = iter(fmt.items())
-    pending: tuple[str, object] | None = None
-
-    while True:
-        # obtain next (key, fmt) pair, using pending if present
-        if pending is not None:
-            key, field_fmt = pending
-            pending = None
-        else:
-            try:
-                key, field_fmt = next(items_iter)
-            except StopIteration:
-                break
-
-        if not isinstance(field_fmt, Bitfield):
-            continue
-
-        # start a new group at this Bitfield
-        start = key
-        group: dict = {key: field_fmt}
-        if field_fmt.align:
-            forced_size = field_fmt.align
-        else:
-            forced_size = 0
-
-        # consume following items until we hit a Bitfield that specifies align
-        while True:
-            try:
-                k, f = next(items_iter)
-            except StopIteration:
-                break
-
-            if isinstance(f, Bitfield) and f.align is None:
-                group[k] = f
-                continue
-
-            # not part of this group; save for next loop iteration
-            pending = (k, f)
-            break
-
-        groups[start] = Bitfields(fields=group, size=forced_size)
-
-    return groups
 
 
 # FUTURE: what should this be? use a sentinel object?
@@ -104,6 +46,7 @@ def _encode_stream(  # noqa: PLR0912
 
         # perf: use type check for common case of dict
         elif fmt_type is dict or isinstance(fmt, Mapping):
+            fmt = _group_bitfields(fmt)
             context.push(obj)
 
             # support MapPrefill protocol for auto-populating sibling fields
@@ -116,20 +59,11 @@ def _encode_stream(  # noqa: PLR0912
                     finally:
                         context.pop_path()
 
-            # preprocess to autodetect Bitfield inlays and build a member->group map
-            bitfields = _collect_bitfield_groups(fmt)
-            bitfields_remaining = 0
-
             for inner_key, field_fmt in fmt.items():
-                # if this key is part of a bitfield group
-                if inner_key in bitfields:
-                    _field_fmt = bitfields[inner_key]
-                    bitfields_remaining = len(_field_fmt.fields) - 1
-                    value = {k: obj[k] for k in _field_fmt.fields}
-                elif bitfields_remaining:
-                    bitfields_remaining -= 1
-                    # this member was encoded with its group; skip
-                    continue
+                if getattr(field_fmt, "inline", False):
+                    _field_fmt = field_fmt
+                    context.fmt = _field_fmt
+                    value = {k: obj[k] for k in field_fmt.fmt.keys()}
                 else:
                     _field_fmt = field_fmt
                     context.fmt = _field_fmt
@@ -155,7 +89,7 @@ def _encode_stream(  # noqa: PLR0912
     return node
 
 
-def _decode_stream(  # noqa: PLR0912, PLR0915
+def _decode_stream(  # noqa: PLR0912
     stream: BinaryIO,
     fmt: Format,
     *,
@@ -186,6 +120,7 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
 
         # perf: use type check for common case of dict
         elif fmt_type is dict or isinstance(fmt, Mapping):
+            fmt = _group_bitfields(fmt)
             result = {}
             context.push(result)
 
@@ -193,9 +128,6 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
             if node:
                 node.value = result
 
-            # preprocess to autodetect Bitfield inlays and build member->group map
-            bitfields = _collect_bitfield_groups(fmt)
-            bitfields_remaining = 0
             greedy_fmts = {}
 
             for inner_key, field_fmt in fmt.items():
@@ -207,23 +139,12 @@ def _decode_stream(  # noqa: PLR0912, PLR0915
                 if len(greedy_fmts) > 1:
                     raise ValueError("multiple greedy items in mapping format")
 
-                # if this key is part of a bitfield group
-                if inner_key in bitfields:
-                    bitfields_fmt = bitfields[inner_key]
-                    bitfields_remaining = len(bitfields_fmt.fields) - 1
-                    # decode the combined group and distribute values
+                if getattr(field_fmt, "inline", False):
                     context.push_path(inner_key)
-                    value = _decode_stream(
-                        stream, fmt=bitfields_fmt, context=context, key=inner_key
-                    )[0]
-                    # value is a mapping of the group's member values
+                    value = _decode_stream(stream, fmt=field_fmt, context=context, key=inner_key)[0]
                     for k, v in value.items():
                         result[k] = v
                     context.pop_path()
-                elif bitfields_remaining:
-                    bitfields_remaining -= 1
-                    # member already decoded as part of its group; skip
-                    continue
                 else:
                     context.push_path(inner_key)
                     value = _decode_stream(stream, fmt=field_fmt, context=context, key=inner_key)[0]

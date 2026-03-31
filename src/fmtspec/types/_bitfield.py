@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 
 from ._int import Int, u8, u16, u32, u64
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 SIZE_MAP = {1: u8, 2: u16, 4: u32, 8: u64}
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Bitfield:
     """Describe one packed bit range inside a larger integer value.
 
@@ -56,10 +56,10 @@ class Bitfield:
     # implement Type interface so this can be used directly
     # FUTURE: see if this can be garbage collected or make weak `self` reference
     def encode(self, stream: BinaryIO, value: int, **_: Any) -> None:
-        return Bitfields(fields={"": self}).encode(stream, {"": value}, **_)
+        return Bitfields({"": self}).encode(stream, {"": value}, **_)
 
     def decode(self, stream: BinaryIO, **_: Any) -> int:
-        return Bitfields(fields={"": self}).decode(stream, **_)[""]
+        return Bitfields({"": self}).decode(stream, **_)[""]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +73,10 @@ class Bitfields:
         {'ready': True}
     """
 
-    fields: dict[str, Bitfield]
+    fmt: dict[str, Bitfield]
+    _: KW_ONLY
     size: Literal[1, 2, 4, 8] | None = None
+    inline: bool = False
     _int_type: Int = field(init=False, repr=False, compare=False)
     _offsets: dict[str, int] = field(init=False, repr=False, compare=False)
 
@@ -84,7 +86,7 @@ class Bitfields:
             # running bit position for auto-placed groups and the maximum
             # required bits from explicit offsets. Grouping rules are the
             # same as before (align applies to a contiguous run).
-            fields = list(self.fields.values())
+            fields = list(self.fmt.values())
             n = len(fields)
             i = 0
             running_bits = 0
@@ -145,7 +147,7 @@ class Bitfields:
         max_bits = self.size * 8
         nbits = 0
         offsets = {}
-        for name, bitfield in self.fields.items():
+        for name, bitfield in self.fmt.items():
             if bitfield.offset:
                 if bitfield.offset < nbits:
                     raise ValueError("Bitfield offsets overlap")
@@ -162,7 +164,7 @@ class Bitfields:
 
     def encode_int(self, value: dict[str, int]) -> int:
         int_val = 0
-        for name, bitfield in self.fields.items():
+        for name, bitfield in self.fmt.items():
             if name not in value:
                 raise ValueError(f"Missing field {name!r}")
             val = value[name]
@@ -189,7 +191,7 @@ class Bitfields:
     def decode_int(self, value: int) -> dict[str, int]:
         return {
             name: self._decode_bitfield(bitfield, name, value)
-            for name, bitfield in self.fields.items()
+            for name, bitfield in self.fmt.items()
         }
 
     def decode(self, stream: BinaryIO, **_: Any) -> dict[str, int]:

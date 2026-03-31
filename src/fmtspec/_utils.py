@@ -89,6 +89,33 @@ def derive_fmt(cls: type) -> Format:
     return result
 
 
+def _group_bitfields(result: dict) -> dict:
+    """Group consecutive Bitfield entries in a format dict into Bitfields(inline=True)."""
+    from .types._bitfield import Bitfield, Bitfields  # noqa: PLC0415
+
+    items = list(result.items())
+    grouped: dict = {}
+    i = 0
+    while i < len(items):
+        key, fmt = items[i]
+        if not isinstance(fmt, Bitfield):
+            grouped[key] = fmt
+            i += 1
+            continue
+        # start a group at this Bitfield; consume following Bitfields with align=None
+        group = {key: fmt}
+        i += 1
+        while i < len(items):
+            k, f = items[i]
+            if isinstance(f, Bitfield) and f.align is None:
+                group[k] = f
+                i += 1
+            else:
+                break
+        grouped[key] = Bitfields(fmt=group, inline=True)
+    return grouped
+
+
 def _extract_format(metadata: tuple) -> Format | None:
     """Extract format from metadata tuple, handling nested Annotated types.
 
