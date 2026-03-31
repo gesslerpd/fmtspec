@@ -27,7 +27,7 @@ class _Struct:
         return (int.from_bytes(data, byteorder=self.byteorder, signed=self.signed),)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Int:
     """Fixed-width integer format.
 
@@ -37,10 +37,10 @@ class Int:
         513
     """
 
+    size: Literal[1, 2, 4, 8, 16]  # this can be extended for larger sizes
     # can use `sys.byteorder` for native byte order
     byteorder: Literal["little", "big"]
     signed: bool
-    size: Literal[1, 2, 4, 8, 16]  # this can be extended for larger sizes
     enum: type[IntEnum] | type[IntFlag] | None = None
     # FUTURE: implement `strict` enum mode?
     _struct: Struct | _Struct = field(init=False, repr=False, compare=False)

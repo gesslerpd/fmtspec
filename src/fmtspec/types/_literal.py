@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from typing import Any, BinaryIO, ClassVar
 
 from ..stream import read_exactly, write_all
@@ -25,7 +25,8 @@ class Literal:
 
     # fields
     value: bytes
-    strict: bool = field(kw_only=True, default=True)
+    _: KW_ONLY
+    strict: bool = True
 
     @property
     def size(self) -> int:

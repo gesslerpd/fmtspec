@@ -20,10 +20,10 @@ from fmtspec.types import Bitfield, Bitfields, u16
 def test_bitfield_basic():
     """Test basic bitfield encoding/decoding."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field": Bitfield(bits=8),
         },
+        size=1,
     )
 
     # Should be 1 byte
@@ -41,10 +41,10 @@ def test_bitfield_basic():
 def test_bitfield_with_offset():
     """Test bitfield with offset."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field": Bitfield(bits=4, offset=4),
         },
+        size=1,
     )
 
     # Should be 1 byte
@@ -63,10 +63,10 @@ def test_bitfield_with_offset():
 def test_bitfield_small():
     """Test small bitfield."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field": Bitfield(bits=1, offset=0),
         },
+        size=1,
     )
 
     assert bitfield.size == 1
@@ -81,7 +81,7 @@ def test_bitfield_small():
 
 
 SPARSE_BITFIELDS_FMT = Bitfields(
-    fields={
+    {
         "bit0": Bitfield(bits=1),
         # [1:6] index bits are gaps (exclusive)
         "end_bits": Bitfield(bits=2, offset=6),
@@ -91,7 +91,7 @@ SPARSE_BITFIELDS_FMT = Bitfields(
 
 def test_auto_size():
     bitfield = Bitfields(
-        fields={
+        {
             "field1": Bitfield(bits=3),
             "field2": Bitfield(bits=5),
         },
@@ -101,7 +101,7 @@ def test_auto_size():
     assert bitfield.size == 1
 
     bitfield2 = Bitfields(
-        fields={
+        {
             "field1": Bitfield(bits=10),
             "field2": Bitfield(bits=10),
         },
@@ -111,7 +111,7 @@ def test_auto_size():
     assert bitfield2.size == 4
 
     bitfield3 = Bitfields(
-        fields={
+        {
             "field1": Bitfield(bits=20),
             "field2": Bitfield(bits=1, offset=63),
         },
@@ -136,8 +136,7 @@ def test_sparse():
 def test_tcp_flags():
     """Demonstrate TCP segment flags packed into a single byte."""
     tcp_flags = Bitfields(
-        size=1,
-        fields={
+        {
             # "fin": Bitfield(bits=1),
             "syn": Bitfield(bits=1, offset=1),
             "rst": Bitfield(bits=1),
@@ -147,6 +146,7 @@ def test_tcp_flags():
             # "ece": Bitfield(bits=1),
             # "cwr": Bitfield(bits=1),
         },
+        size=1,
     )
 
     flags = {
@@ -184,21 +184,21 @@ def test_bitfield_invalid_offset():
 def test_bitfields_invalid_size():
     """Test that Bitfields rejects non-positive size values."""
     with pytest.raises(ValueError, match="Unsupported size"):
-        Bitfields(size=9, fields={})
+        Bitfields({}, size=9)
 
     with pytest.raises(ValueError, match="Unsupported size"):
-        Bitfields(size=-1, fields={})
+        Bitfields({}, size=-1)
 
 
 def test_bitfields_overlapping_offsets():
     """Test detection of overlapping bitfield offsets."""
     with pytest.raises(ValueError, match="Bitfield offsets overlap"):
         Bitfields(
-            size=1,
-            fields={
+            {
                 "field1": Bitfield(bits=4, offset=0),
                 "field2": Bitfield(bits=4, offset=2),  # overlaps with field1
             },
+            size=1,
         )
 
 
@@ -206,11 +206,11 @@ def test_bitfields_exceeds_size():
     """Test that bitfields exceeding total size are rejected."""
     with pytest.raises(ValueError, match="Bitfield exceeds total size"):
         Bitfields(
-            size=1,  # 8 bits
-            fields={
+            {
                 "field1": Bitfield(bits=4, offset=0),
                 "field2": Bitfield(bits=5, offset=4),  # 4 + 5 = 9 > 8
             },
+            size=1,  # 8 bits
         )
 
 
@@ -218,30 +218,30 @@ def test_bitfields_auto_offset_exceeds_size():
     """Test auto-calculated offsets that exceed size."""
     with pytest.raises(ValueError, match="Bitfield exceeds total size"):
         Bitfields(
-            size=1,  # 8 bits
-            fields={
+            {
                 "field1": Bitfield(bits=4),  # offset=0, bits=4
                 "field2": Bitfield(bits=5),  # offset=4, 4+5=9 > 8
             },
+            size=1,  # 8 bits
         )
 
     Bitfields(
-        size=2,  # 16 bits
-        fields={
+        {
             "field1": Bitfield(bits=4),  # offset=0, bits=4
             "field2": Bitfield(bits=5),  # offset=4, 4+5=9 > 8
         },
+        size=2,  # 16 bits
     )
 
 
 def test_encode_missing_field():
     """Test encoding with missing required fields."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field1": Bitfield(bits=3, offset=1),
             "field2": Bitfield(bits=4),
         },
+        size=1,
     )
 
     with pytest.raises(EncodeError, match="Missing field 'field2'"):
@@ -251,10 +251,10 @@ def test_encode_missing_field():
 def test_encode_invalid_value_type():
     """Test encoding with non-integer values."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field": Bitfield(bits=1),
         },
+        size=1,
     )
 
     with pytest.raises(EncodeError, match="not supported between instances"):
@@ -264,10 +264,10 @@ def test_encode_invalid_value_type():
 def test_encode_value_out_of_range():
     """Test encoding with values outside bitfield range."""
     bitfield = Bitfields(
-        size=1,
-        fields={
+        {
             "field": Bitfield(bits=2),  # range 0-3
         },
+        size=1,
     )
 
     with pytest.raises(EncodeError, match="Value 4 for field 'field' out of range"):
@@ -280,10 +280,10 @@ def test_encode_value_out_of_range():
 def test_decode_insufficient_data():
     """Test decoding with insufficient bytes."""
     bitfield = Bitfields(
-        size=2,  # expects 2 bytes
-        fields={
+        {
             "field": Bitfield(bits=8),
         },
+        size=2,  # expects 2 bytes
     )
 
     with pytest.raises(DecodeError, match="Expected 2 bytes, got 1"):
@@ -327,8 +327,13 @@ MIXED_BITFIELDS_FMT = {
     "flag": Bitfield(bits=1, offset=0),  # [0:1] index bit (exclusive)
     "other_flag": Bitfield(bits=3, offset=4),  # [4:7] index bits (exclusive)
     "mid": u16,
-    "flag2": Bitfield(bits=1),  # [0:1] index bit (exclusive)
-    "other_flag2": Bitfield(bits=3, offset=12),  # [4:7] index bits (exclusive)
+    "flag2": Bitfields(
+        {
+            "flag2": Bitfield(bits=1),  # [0:1] index bit (exclusive)
+            "other_flag2": Bitfield(bits=3, offset=12),  # [12:15] index bits (exclusive)
+        },
+        inline=True,
+    ),
     "last": u16,
 }
 
@@ -372,7 +377,7 @@ def test_bitfield_align_starts_sized_group():
 
 def test_bitfields_align_direct():
     bf = Bitfields(
-        fields={
+        {
             "a": Bitfield(bits=4, align=2),
             "b": Bitfield(bits=4),
         }
@@ -392,7 +397,7 @@ def test_bitfields_align_direct():
 
 def test_bitfields_multi_align_direct():
     bf = Bitfields(
-        fields={
+        {
             "a": Bitfield(bits=9, align=8),
             "b": Bitfield(bits=4, offset=16),
             "c": Bitfield(bits=4),
@@ -482,11 +487,11 @@ def test_bitfield_direct_with_enum():
 
 def test_bitfields_field_enum_roundtrip():
     bf = Bitfields(
-        size=1,
-        fields={
+        {
             "perm": Bitfield(bits=3, enum=Permissions),
             "other": Bitfield(bits=5),
         },
+        size=1,
     )
 
     obj = {"perm": Permissions.WRITE, "other": 0b10101}
@@ -501,11 +506,11 @@ def test_bitfields_field_enum_roundtrip():
 
 def test_bitfields_encode_inspect_tree():
     bf = Bitfields(
-        size=1,
-        fields={
+        {
             "flag": Bitfield(bits=1),
             "mode": Bitfield(bits=3, offset=4),
         },
+        size=1,
     )
 
     obj = {"flag": True, "mode": 0b101}
@@ -526,11 +531,11 @@ def test_bitfields_encode_inspect_tree():
 
 def test_bitfields_decode_inspect_tree():
     bf = Bitfields(
-        size=1,
-        fields={
+        {
             "flag": Bitfield(bits=1),
             "mode": Bitfield(bits=3, offset=4),
         },
+        size=1,
     )
 
     result, tree = decode_inspect(b"\x51", bf)
@@ -599,7 +604,7 @@ def test_align_on_non_first_field_raises() -> None:
         ValueError, match="Bitfield align is only allowed on the first field of a group"
     ):
         Bitfields(
-            fields={
+            {
                 "a": Bitfield(bits=1),
                 "b": Bitfield(bits=1, align=2),
             }
@@ -610,7 +615,7 @@ def test_forced_align_group_size_exceeded() -> None:
     """A forced-align group whose total bits exceed the aligned size should fail."""
     with pytest.raises(ValueError, match="Bitfield exceeds forced align group size"):
         Bitfields(
-            fields={
+            {
                 "a": Bitfield(bits=5, align=1),  # forced_bits = 8
                 "b": Bitfield(bits=4),
             }

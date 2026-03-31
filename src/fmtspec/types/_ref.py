@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ class Ref:
     """
 
     key: str
+    _: KW_ONLY
     parent: int = 1
     cast: Callable[[Any], Any] | None = None
 

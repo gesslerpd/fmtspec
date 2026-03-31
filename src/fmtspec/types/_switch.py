@@ -9,7 +9,7 @@ decoders and an optional encoding dispatch path.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from io import BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
@@ -60,6 +60,7 @@ class Switch:
 
     key: Ref
     cases: dict[Any, Format]
+    _: KW_ONLY
     default: Format | None = None
 
     def _get_fmt(self, key_value: Any) -> Format:
@@ -90,6 +91,7 @@ class TaggedUnion:
 
     tag: Format | Ref
     fmt_map: dict[Any, Any] = field(default_factory=dict)
+    _: KW_ONLY
     # runtime mappings populated in __post_init__
     fmt_by_tag: dict[Any, Any] = field(default_factory=dict)
     struct_cls_by_tag: dict[Any, type] = field(default_factory=dict)

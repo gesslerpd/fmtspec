@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import Any, BinaryIO
 
 from ..stream import read_exactly, write_all
@@ -15,6 +15,7 @@ class Str:
     """
 
     size: int | None = None
+    _: KW_ONLY
     encoding: str = "utf-8"
 
     def encode(self, stream: BinaryIO, value: str, **_: Any) -> None:

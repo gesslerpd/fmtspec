@@ -43,14 +43,14 @@ class Opcode(IntEnum):
 
 
 FRAME_HEADER_FLAGS_FMT = types.Bitfields(
-    fields={
+    {
         "opcode": types.Bitfield(bits=4, offset=0, enum=Opcode),
         "finished": types.Bitfield(bits=1, offset=7),
     }
 )
 
 FRAME_HEADER_LENGTH_FMT = types.Bitfields(
-    fields={
+    {
         "len_payload_primary": types.Bitfield(bits=7, offset=0),
         "is_masked": types.Bitfield(bits=1, offset=7),
     }

@@ -73,7 +73,7 @@ class ASN1Node(TypedDict, total=False):
 
 
 ASN1_TAG_OCTET = types.Bitfields(
-    fields={
+    {
         "tag_low": types.Bitfield(bits=5),
         "constructed": types.Bitfield(bits=1),
         "tag_class": types.Bitfield(bits=2),

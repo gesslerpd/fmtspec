@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from io import BytesIO
 from types import EllipsisType
 from typing import Any, BinaryIO, ClassVar
@@ -24,6 +24,7 @@ class TakeUntil:
     size: ClassVar[EllipsisType] = ...
     fmt: Type
     terminator: bytes
+    _: KW_ONLY
     max_size: int | None = None
 
     def __post_init__(self) -> None:

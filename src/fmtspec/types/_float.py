@@ -11,7 +11,7 @@ FLOAT32_SIZE = 4
 FLOAT64_SIZE = 8
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Float:
     """Fixed-width IEEE 754 floating-point format."""
 
