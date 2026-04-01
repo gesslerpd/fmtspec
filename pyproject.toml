@@ -44,7 +44,7 @@ Issues = "https://github.com/gesslerpd/fmtspec/issues"
 Changelog = "https://github.com/gesslerpd/fmtspec/releases"
 
 [build-system]
-requires = ["uv-build>=0.10,<0.11"]
+requires = ["uv-build>=0.11,<0.12"]
 build-backend = "uv_build"
 
 [dependency-groups]

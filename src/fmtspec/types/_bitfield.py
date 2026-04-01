@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import KW_ONLY, dataclass, field
+from enum import IntFlag
 from typing import TYPE_CHECKING, Any, BinaryIO, Literal
 
 from ._int import Int, u8, u16, u32, u64
 
 if TYPE_CHECKING:
-    from enum import IntEnum, IntFlag
+    from enum import IntEnum
 
 SIZE_MAP = {1: u8, 2: u16, 4: u32, 8: u64}
 
@@ -181,8 +182,10 @@ class Bitfields:
 
     def _decode_bitfield(self, bitfield: Bitfield, name: str, int_val: int) -> int:
         raw = (int_val >> self._offsets[name]) & bitfield.mask
-        if bitfield.enum and raw in bitfield.enum:
-            return bitfield.enum(raw)
+        if bitfield.enum:
+            # 3.12 IntFlag __contains__ is falsey for unnamed values
+            if issubclass(bitfield.enum, IntFlag) or raw in bitfield.enum:
+                return bitfield.enum(raw)
 
         # if the bitfield is a single bit, return bool to support `bool` annotated fields
         # True/False behave as `int` but not other way around

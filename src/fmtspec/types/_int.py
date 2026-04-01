@@ -67,9 +67,10 @@ class Int:
         raw = read_exactly(stream, self.size)
         # FUTURE: use the unpack_from method for efficiency?
         value = self._struct.unpack(raw)[0]
-        if self.enum and value in self.enum:
-            # convert to enum member if possible
-            value = self.enum(value)
+        if self.enum:
+            # 3.12 IntFlag __contains__ is falsey for unnamed values
+            if issubclass(self.enum, IntFlag) or value in self.enum:
+                value = self.enum(value)
         return value
 
 
