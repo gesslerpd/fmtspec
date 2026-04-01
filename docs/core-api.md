@@ -2,7 +2,7 @@
 
 This page documents the public API exported from `fmtspec`.
 
-Use it to understand how values move through encoding, decoding, shape conversion, inspection, and error reporting.
+Use it to understand how values move through encoding, decoding, type conversion, inspection, and error reporting.
 
 ## The Main Entry Points
 
@@ -25,19 +25,19 @@ data = encode({"name": "widget", "count": 3}, packet_fmt)
 assert data == b"widget\0\x03\x00\x00\x00"
 ```
 
-### `decode(data, fmt=None, *, shape=None, strict=False) -> Any`
+### `decode(data, fmt=None, *, type=None) -> Any`
 
 Decode a byte buffer into Python values.
 
 - `fmt` defines the wire layout.
-- `shape` converts decoded builtins into a typed result and can also drive format derivation when `fmt` is omitted.
-- `strict=True` raises `DecodeError` if any trailing bytes remain after a successful decode. This is useful in protocol parsing where extra bytes indicate a malformed or truncated message rather than valid trailing data to be ignored.
+- `type` converts decoded builtins into a typed result and can also drive format derivation when `fmt` is omitted.
+- Raises `ExcessDecodeError` if any trailing bytes remain after a successful decode. Use `decode_stream` when partial consumption is intended.
 
 ```python
 from dataclasses import dataclass
 from typing import Annotated
 
-from fmtspec import DecodeError, decode, types
+from fmtspec import ExcessDecodeError, decode, types
 
 @dataclass(frozen=True, slots=True)
 class Record:
@@ -46,19 +46,15 @@ class Record:
 
 
 
-record = decode(b"widget\0\x03\x00\x00\x00", shape=Record)
+record = decode(b"widget\0\x03\x00\x00\x00", type=Record)
 assert record == Record(name="widget", count=3)
 
-# With strict=True, extra bytes raise DecodeError
-assert decode(b"\x00\x2a", types.u16, strict=True) == 42
+assert decode(b"\x00\x2a", types.u16) == 42
 
 try:
-    decode(b"\x00\x2a\xff", types.u16, strict=True)
-except DecodeError:
-    pass
-
-# With strict=False (default), extra bytes are silently ignored
-assert decode(b"\x00\x2a\xff", types.u16) == 42
+    decode(b"\x00\x2a\xff", types.u16)
+except ExcessDecodeError as exc:
+    print(exc.remaining)  # 1 — typed byte count, no message parsing needed
 ```
 
 ### `encode_stream(stream, obj, fmt=None) -> None`
@@ -67,11 +63,11 @@ Encode directly into a file-like object.
 
 Use this for files, sockets, or `BytesIO` when you do not want to allocate an intermediate `bytes` object.
 
-### `decode_stream(stream, fmt=None, *, shape=None) -> Any`
+### `decode_stream(stream, fmt=None, *, type=None) -> Any`
 
 Decode directly from a file-like object.
 
-This is the streaming counterpart to `decode(...)`. Unlike `decode(...)`, it does not have a `strict` flag. If you need to verify that a buffer was fully consumed, use `decode(..., strict=True)` instead.
+This is the streaming counterpart to `decode(...)`. It does not raise on trailing bytes — the stream is left positioned after the decoded data, and `stream.read()` returns any remaining bytes.
 
 ## Format Derivation and Size Information
 
@@ -85,7 +81,7 @@ Supported derivation inputs include:
 - `msgspec.Struct` classes
 - standard classes whose annotations carry fmtspec metadata
 
-Important boundary: format derivation is broader than shape conversion. In practice, `decode(..., shape=...)` is the ergonomic path for dataclasses and `msgspec.Struct` values.
+Important boundary: format derivation is broader than type conversion. In practice, `decode(..., type=...)` is the ergonomic path for dataclasses and `msgspec.Struct` values.
 
 ```python
 from dataclasses import dataclass
@@ -133,13 +129,16 @@ assert sizeof(types.Bytes()) is None
 
 Inspection is fmtspec's debugging-oriented view. It records offsets, byte counts, nested structure, and values for each encoding or decoding step.
 
-### `encode_inspect(obj, fmt) -> tuple[bytes, InspectNode]`
+### `encode_inspect(obj, fmt=None) -> tuple[bytes, InspectNode]`
 
 Encode and return both the bytes and the root inspection node.
 
-### `decode_inspect(data, fmt, *, shape=None) -> tuple[Any, InspectNode]`
+### `decode_inspect(data, fmt=None, *, type=None) -> tuple[Any, InspectNode]`
 
 Decode and return both the result and the root inspection node.
+
+- If `fmt` is omitted, `type` must be provided so fmtspec can derive the format before decoding.
+- Raises `ExcessDecodeError` if any trailing bytes remain after a successful decode (the error carries an `inspect_node` with the successfully decoded tree).
 
 ### `format_tree(node, *, indent="  ", show_data=True, max_data_bytes=24, only_leaf=True, max_depth=-1) -> str`
 
@@ -244,24 +243,47 @@ Base exception for fmtspec failures.
 
 Raised when encoding fails.
 
+### `ExcessDecodeError`
+
+Raised when trailing bytes remain after a successful decode.
+
+Distinct from `DecodeError` — use `except ExcessDecodeError` to handle only excess-data situations, or `except Error` to catch all fmtspec failures together.
+
+The `stream` is positioned at the start of the excess data, so further decoding can be done via `decode_stream`:
+
+```python
+from fmtspec import ExcessDecodeError, decode_stream, types
+
+try:
+    result = decode(data, header_fmt)
+except ExcessDecodeError as exc:
+    # decode the remaining bytes as a payload
+    payload = decode_stream(exc.stream, payload_fmt)
+```
+
+Extra attribute:
+
+- `remaining: int` — count of unconsumed bytes, without materialising them.
+
 ### `DecodeError`
 
 Raised when decoding fails.
 
-### `ShapeError`
+### `TypeConversionError`
 
-Raised when fmtspec decoded the bytes successfully but could not convert the result into the requested `shape`.
+Raised when fmtspec decoded the bytes successfully but could not convert the result into the requested `type`.
 
-Exception objects preserve useful debugging state such as:
+Attributes:
 
-- the active format
-- the current object or partial result
-- the nested path
-- the original cause
-- an inspection node when inspection was enabled
+- `obj`: the raw decoded data (Python builtins) that failed conversion
+- `type`: the target type that was requested
+- `fmt`: the format used to decode the bytes
+- `cause`: the underlying exception raised during type conversion
+- `inspect_node`: inspection tree from the decode step, when inspection was enabled
 
 Typical usage:
 
 - `EncodeError` for missing fields, invalid literal values, or size mismatches during writing
-- `DecodeError` for truncated input, wrong markers, unknown tags, or trailing bytes with `strict=True`
-- `ShapeError` for post-decode conversion problems
+- `DecodeError` for truncated input, wrong markers, or unknown tags
+- `ExcessDecodeError` for trailing bytes after a successful decode
+- `TypeConversionError` for post-decode type conversion problems

@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode, types
+from fmtspec import DecodeError, EncodeError, ExcessDecodeError, decode, encode, types
 
 
 def test_iterable_array():
@@ -127,8 +127,8 @@ def test_array_zero_leaf_dim_decode_strict_excess_raises():
     u8 = types.u8le
     arr0 = types.array(u8, dims=0)
 
-    with pytest.raises(DecodeError, match=r"Excess data after decoding"):
-        decode(b"\x01", arr0, strict=True)
+    with pytest.raises(ExcessDecodeError, match=r"Excess data"):
+        decode(b"\x01", arr0)
 
 
 def test_prefixed_array_roundtrip():

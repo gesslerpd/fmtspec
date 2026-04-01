@@ -157,6 +157,7 @@ class Context(Struct, gc=False):
     parents: deque[Any] = field(default_factory=lambda: deque(({},)))
     path: deque[str | int] = field(default_factory=deque)
     fmt: Format | None = None
+    start_offset: int = 0
     store: dict[Any, Any] = field(default_factory=dict)
     inspect: bool = False
     inspect_node: InspectNode | None = None

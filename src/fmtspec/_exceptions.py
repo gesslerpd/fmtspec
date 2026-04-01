@@ -7,17 +7,13 @@ if TYPE_CHECKING:
     from ._protocol import Format, InspectNode
 
 
-@dataclass(slots=True, kw_only=True)
 class Error(Exception):
-    """Base class for all encoding/decoding errors.
+    """Base class for all fmtspec errors."""
 
-    Attributes:
-        message: Human-readable error description.
-        context: The partially encoded/decoded object at the time of the error.
-        cause: The underlying exception that caused this error.
-        path: The path (field names/indices) leading to the error.
-        inspect_node: Optional partial inspection tree showing state at time of error.
-    """
+
+@dataclass(slots=True, kw_only=True)
+class StreamError(Error):
+    """Base class for all encode/decode stream errors."""
 
     _PREAMBLE = "Error"
 
@@ -26,35 +22,66 @@ class Error(Exception):
     stream: BinaryIO
     fmt: Format | None
     context: Any
-    cause: Exception | None
+    local_context: Any
+    cause: Exception
     path: tuple[str | int, ...]
     inspect_node: InspectNode | None
+    start_offset: int
+    offset: int
 
     def __str__(self) -> str:
-        cur = self.stream.tell()
-        # if self.fmt is None:
-        #     end = ...
-        # else:
-        #     offset = sizeof(self.fmt)
-        #     end = (cur + offset) if isinstance(offset, int) else ...
         if self._PREAMBLE is None:
             return f"{self.message}"
-        return f"{self._PREAMBLE} @ [{cur}:...] {self.path}: {self.message}"
+        return f"{self._PREAMBLE} @ [{self.start_offset}:{self.offset}] {self.path}: {self.message}"
 
 
-class EncodeError(Error):
+class EncodeError(StreamError):
     """Raised when an error occurs during encoding."""
 
     _PREAMBLE = "Error encoding"
 
 
-class DecodeError(Error):
+class DecodeError(StreamError):
     """Raised when an error occurs during decoding."""
 
     _PREAMBLE = "Error decoding"
 
 
-class ShapeError(DecodeError):
-    """Raised when a conversion error occurs during decoding for provided shape."""
+@dataclass(slots=True, kw_only=True)
+class TypeConversionError(Error):
+    """Raised when a conversion error occurs during decoding for provided type."""
 
-    _PREAMBLE = None
+    message: str
+    obj: Any
+    type: type
+    fmt: Format
+    cause: Exception
+    inspect_node: InspectNode | None
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(slots=True, kw_only=True)
+class ExcessDecodeError(Error):
+    """Raised when trailing bytes remain after `decode`.
+
+    The stream is positioned at the start of the excess data, so further
+    decoding attempts can be made directly via ``decode_stream(exc.stream, ...)``.
+
+    Attributes:
+        remaining: Number of unconsumed bytes left in the stream.
+    """
+
+    obj: Any
+    stream: BinaryIO
+    fmt: Format
+    inspect_node: InspectNode | None
+    remaining: int
+    start_offset: int
+    offset: int
+
+    def __str__(self) -> str:
+        return (
+            f"Excess data @ [{self.start_offset}:{self.offset}]: {self.remaining} bytes remaining"
+        )

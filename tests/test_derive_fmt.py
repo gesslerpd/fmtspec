@@ -5,7 +5,15 @@ from typing import Annotated, ClassVar
 import msgspec
 import pytest
 
-from fmtspec import EncodeError, ShapeError, decode, decode_stream, derive_fmt, encode, types
+from fmtspec import (
+    EncodeError,
+    TypeConversionError,
+    decode,
+    decode_stream,
+    derive_fmt,
+    encode,
+    types,
+)
 
 INT_FMT = types.Int(byteorder="little", signed=False, size=4)
 STR_FMT = types.TakeUntil(types.Str(), b"\0")
@@ -154,7 +162,7 @@ def test_msgspec_nested():
 def test_empty_roundtrip():
     encoded = encode(EmptyDataclass())
     assert encoded == b""
-    decoded = decode(encoded, shape=EmptyDataclass)
+    decoded = decode(encoded, type=EmptyDataclass)
     assert isinstance(decoded, EmptyDataclass)
 
 
@@ -164,7 +172,7 @@ def test_dataclass_roundtrip():
     data = encode(obj)
     assert data == b"value\0\x2a\x00\x00\x00"
 
-    result = decode(data, shape=DataclassExample)
+    result = decode(data, type=DataclassExample)
     assert result == obj
 
     assert result.sentinel is DataclassExample.sentinel is obj.sentinel
@@ -189,7 +197,7 @@ def test_dataclass_no_init_roundtrip():
 
     assert data == b"val\0\x2b\x00\x00\x00\x2a\x00\x00\x00"
 
-    result = decode(data, shape=NoInitDataclassExample)
+    result = decode(data, type=NoInitDataclassExample)
     assert result == obj
 
 
@@ -199,20 +207,20 @@ def test_msgspec_roundtrip():
     data = encode(obj)
     assert data == b"value\0\x2a\x00\x00\x00"
 
-    result = decode(data, shape=StructExample)
+    result = decode(data, type=StructExample)
     assert result == obj
 
     assert result.sentinel is StructExample.sentinel is obj.sentinel
 
 
-def test_decode_without_fmt_or_shape_raises():
-    with pytest.raises(ValueError, match="Either fmt or shape must be provided"):
+def test_decode_without_fmt_or_type_raises():
+    with pytest.raises(ValueError, match="Either fmt or type must be provided"):
         decode(b"")
 
 
-def test_decode_stream_requires_fmt_or_shape():
+def test_decode_stream_requires_fmt_or_type():
     stream = BytesIO(b"")
-    with pytest.raises(ValueError, match="Either fmt or shape must be provided"):
+    with pytest.raises(ValueError, match="Either fmt or type must be provided"):
         decode_stream(stream)
 
 
@@ -254,13 +262,13 @@ def test_standard_class_roundtrip():
     data = encode(obj)
 
     assert data == b"value\0\x2a\x00\x00\x00"
-    result = decode(data, shape=StandardClassExample)
+    result = decode(data, type=StandardClassExample)
     assert result == obj
 
     assert result.sentinel is StandardClassExample.sentinel is obj.sentinel
 
 
-@pytest.mark.xfail(strict=True, raises=ShapeError)
+@pytest.mark.xfail(strict=True, raises=TypeConversionError)
 def test_mismatch_type_roundtrip():
     # FUTURE: fallback for decode conversion with mismatched types?
     # would require disabling msgpack validation (warn of type mistmatch on derive_fmt?)
@@ -269,6 +277,6 @@ def test_mismatch_type_roundtrip():
     data = encode(obj)
     assert data == b"value\0\x2a\x00\x00\x00"
 
-    result = decode(data, shape=MismatchTypeFmtShape)
+    result = decode(data, type=MismatchTypeFmtShape)
 
     assert result.sentinel is MismatchTypeFmtShape.sentinel is obj.sentinel

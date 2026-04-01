@@ -3,7 +3,7 @@ from enum import IntEnum, IntFlag, auto
 
 import pytest
 
-from fmtspec import ShapeError, decode, encode, types
+from fmtspec import TypeConversionError, decode, encode, types
 
 
 class NumberEnum(IntEnum):
@@ -52,7 +52,7 @@ def test_roundtrip():
 
     assert data == b"value\0\x2a\x00\x00\x00"
 
-    result = decode(data, fmt, shape=ExampleDataClass)
+    result = decode(data, fmt, type=ExampleDataClass)
     assert result == obj
 
 
@@ -70,7 +70,7 @@ def test_nested():
 
     assert data == b"value\0\x2a\x00\x00\x00\x00\x01"
 
-    result = decode(data, fmt, shape=NestedDataClass)
+    result = decode(data, fmt, type=NestedDataClass)
     assert result == obj
 
 
@@ -90,7 +90,7 @@ def test_partial_nested():
     assert data == b"value\0\x2a\x00\x00\x00\x00\x01"
     assert data == encode(partial_obj, fmt)
 
-    assert decode(encode(partial_obj, fmt), fmt, shape=NestedDataClass) == obj
+    assert decode(encode(partial_obj, fmt), fmt, type=NestedDataClass) == obj
 
 
 @dataclass
@@ -110,7 +110,7 @@ def test_defaults():
 
     assert data == b"value\0\x2a\x00\x00\x00"
 
-    result = decode(data, fmt, shape=DataClassWithDefaults)
+    result = decode(data, fmt, type=DataClassWithDefaults)
     assert result == obj
 
 
@@ -124,7 +124,7 @@ def test_partial_fmt():
 
     assert data == b"value\0"
 
-    assert decode(data, fmt, shape=DataClassWithDefaults) == obj
+    assert decode(data, fmt, type=DataClassWithDefaults) == obj
     assert obj.number == 42
 
 
@@ -136,7 +136,7 @@ def test_strict_enum():
     }
     data = encode(obj, fmt)
     assert data == b"value\0\x2a\x00\x00\x00"
-    result = decode(data, fmt, shape=StrictEnum)
+    result = decode(data, fmt, type=StrictEnum)
     assert result == obj
     assert result.number.name == "EVERYTHING"
 
@@ -147,15 +147,15 @@ def test_strict_enum():
     }
     data = encode(obj, fmt)
     assert data == b"value\0\x2a\x00\x00\x00"
-    result = decode(data, fmt, shape=StrictEnum)
+    result = decode(data, fmt, type=StrictEnum)
     assert result == obj
     assert result.number.name == "EVERYTHING"
 
     # FUTURE: should this error? right now doesn't error until decoding
     encode(StrictEnum(key="value", number=1), fmt)
 
-    with pytest.raises(ShapeError, match="Invalid enum value 1"):
-        decode(b"value\0\x01\x00\x00\x00", fmt, shape=StrictEnum)
+    with pytest.raises(TypeConversionError, match="Invalid enum value 1"):
+        decode(b"value\0\x01\x00\x00\x00", fmt, type=StrictEnum)
 
 
 def test_strict_flag():
@@ -166,7 +166,7 @@ def test_strict_flag():
     }
     data = encode(obj, fmt)
     assert data == b"value\0\x03\x00\x00\x00"
-    result = decode(data, fmt, shape=StrictFlag)
+    result = decode(data, fmt, type=StrictFlag)
     assert result == obj
     assert result.number.name == "READ|WRITE"
 

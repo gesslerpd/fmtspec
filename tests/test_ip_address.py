@@ -25,7 +25,7 @@ def test_ipv4_field_u32():
 
     assert data == b"\x7f\x00\x00\x01"
 
-    result = decode(data, fmt, shape=IPv4Holder)
+    result = decode(data, fmt, type=IPv4Holder)
     assert result.ipv4 == obj.ipv4
     assert isinstance(result.ipv4, ipaddress.IPv4Address)
 
@@ -33,7 +33,7 @@ def test_ipv4_field_u32():
 
     assert data == b"\x7f\x00\x00\x01"
 
-    result = decode(data, shape=IPv4Holder)
+    result = decode(data, type=IPv4Holder)
     assert result.ipv4 == obj.ipv4
     assert isinstance(result.ipv4, ipaddress.IPv4Address)
 
@@ -41,7 +41,7 @@ def test_ipv4_field_u32():
 
     assert data == b"\x7f\x00\x00\x01"
 
-    result = decode(data, fmt, shape=IPv4Holder)
+    result = decode(data, fmt, type=IPv4Holder)
     assert result.ipv4 == obj.ipv4
     assert isinstance(result.ipv4, ipaddress.IPv4Address)
 
@@ -56,7 +56,7 @@ def test_ipv6_field_u128():
 
     assert data == b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"
 
-    result = decode(data, fmt, shape=IPv6Holder)
+    result = decode(data, fmt, type=IPv6Holder)
     assert result.ipv6 == obj.ipv6
     assert isinstance(result.ipv6, ipaddress.IPv6Address)
 
@@ -64,7 +64,7 @@ def test_ipv6_field_u128():
 
     assert data == b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"
 
-    result = decode(data, shape=IPv6Holder)
+    result = decode(data, type=IPv6Holder)
     assert result.ipv6 == obj.ipv6
     assert isinstance(result.ipv6, ipaddress.IPv6Address)
 
@@ -72,6 +72,6 @@ def test_ipv6_field_u128():
 
     assert data == b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01"
 
-    result = decode(data, fmt, shape=IPv6Holder)
+    result = decode(data, fmt, type=IPv6Holder)
     assert result.ipv6 == obj.ipv6
     assert isinstance(result.ipv6, ipaddress.IPv6Address)

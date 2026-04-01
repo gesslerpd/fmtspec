@@ -3,12 +3,12 @@
 from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
-from typing import BinaryIO
+from typing import Annotated, BinaryIO
 
 import pytest
 
 import fmtspec
-from fmtspec import format_tree, types
+from fmtspec import ExcessDecodeError, format_tree, types
 from fmtspec._core import _decode_stream_impl, _encode_stream_impl
 
 
@@ -119,6 +119,25 @@ class TestEncodeInspect:
         assert header_node.children[0].key == "version"
         assert header_node.children[1].key == "flags"
 
+    def test_fmt_optional_derived_from_obj(self):
+        """Test that fmt=None derives the format from the object type."""
+
+        @dataclass
+        class Point:
+            x: Annotated[int, types.u8]
+            y: Annotated[int, types.u8]
+
+        obj = Point(x=1, y=2)
+        data, tree = fmtspec.encode_inspect(obj)
+
+        assert data == b"\x01\x02"
+        assert tree.size == 2
+        assert len(tree.children) == 2
+        assert tree.children[0].key == "x"
+        assert tree.children[0].value == 1
+        assert tree.children[1].key == "y"
+        assert tree.children[1].value == 2
+
 
 class TestDecodeInspect:
     """Tests for decode_inspect function."""
@@ -176,6 +195,69 @@ class TestDecodeInspect:
         assert tree.children[1].value == 0x0203
         assert tree.children[1].offset == 1
         assert tree.children[1].size == 2
+
+    def test_fmt_optional_derived_from_shape(self):
+        """Test that fmt=None derives the format from the shape type."""
+
+        @dataclass
+        class Point:
+            x: Annotated[int, types.u8]
+            y: Annotated[int, types.u8]
+
+        result, tree = fmtspec.decode_inspect(b"\x01\x02", type=Point)
+
+        assert isinstance(result, Point)
+        assert result.x == 1
+        assert result.y == 2
+        assert tree.size == 2
+        assert len(tree.children) == 2
+        assert tree.children[0].key == "x"
+        assert tree.children[1].key == "y"
+
+    def test_fmt_and_type_both_none_raises(self):
+        """Test that omitting both fmt and type raises ValueError."""
+        with pytest.raises(ValueError, match="fmt or type"):
+            fmtspec.decode_inspect(b"\x01\x02")
+
+    def test_strict_no_trailing_bytes(self):
+        """Test that decode_inspect succeeds when no trailing bytes remain."""
+        fmt = types.Int(byteorder="big", signed=False, size=2)
+        result, tree = fmtspec.decode_inspect(b"\x01\x02", fmt)
+
+        assert result == 0x0102
+        assert tree.size == 2
+
+    def test_strict_trailing_bytes_raises(self):
+        """Test that decode_inspect raises ExcessDataError when trailing bytes remain."""
+        fmt = types.Int(byteorder="big", signed=False, size=2)
+        with pytest.raises(ExcessDecodeError, match="5 bytes") as exc_info:
+            fmtspec.decode_inspect(b"\x01\x02" + b"EXTRA", fmt)
+        assert exc_info.value.remaining == 5
+
+    def test_strict_trailing_bytes_error_carries_inspect_node(self):
+        """Test that ExcessDecodeError carries the inspect_node."""
+        fmt = {"x": types.u8, "y": types.u8}
+        with pytest.raises(ExcessDecodeError) as exc_info:
+            fmtspec.decode_inspect(b"\x01\x02\xff", fmt)
+
+        err = exc_info.value
+        assert err.inspect_node is not None
+        # The tree should have the decoded values from the successful parse
+        assert err.inspect_node.size == 2
+        assert len(err.inspect_node.children) == 2
+        assert err.inspect_node.children[0].value == 1
+        assert err.inspect_node.children[1].value == 2
+
+    def test_stream_allows_trailing_bytes(self):
+        """Test that decode_stream allows trailing bytes."""
+        from io import BytesIO
+
+        fmt = types.Int(byteorder="big", signed=False, size=2)
+        stream = BytesIO(b"\x01\x02\xff\xff")
+        result = fmtspec.decode_stream(stream, fmt)
+
+        assert result == 0x0102
+        assert stream.read() == b"\xff\xff"
 
 
 class TestFormatTree:
@@ -695,7 +777,7 @@ class TestDecodeInspectStream:
             "y": types.Int(byteorder="big", signed=False, size=1),
         }
         stream = BytesIO(b"\x01\x02")
-        result, tree = _decode_stream_impl(stream, fmt, inspect=True, shape=Point)
+        result, tree = _decode_stream_impl(stream, fmt, inspect=True, type=Point)
 
         assert isinstance(result, Point)
         assert result.x == 1

@@ -11,7 +11,8 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, overload
 
 from ._core import _decode_stream_impl, _encode_stream_impl
-from ._exceptions import DecodeError, EncodeError
+from ._exceptions import DecodeError, EncodeError, ExcessDecodeError
+from ._utils import derive_fmt
 from .types import Bitfield, Bitfields
 
 if TYPE_CHECKING:
@@ -27,14 +28,16 @@ def _attach_buffer_tree(
         _attach_buffer_tree(child, buffer)
 
 
-def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
+def encode_inspect(obj: Any, fmt: Format | None = None) -> tuple[bytes, InspectNode]:
     """Encode formatted object into bytes with inspection.
 
     Returns a tuple of (encoded_bytes, inspection_tree).
 
+    If ``fmt`` is omitted, fmtspec attempts to derive it from ``obj``.
+
     Args:
         obj: The Python object to encode.
-        fmt: The format specification.
+        fmt: The format specification. If omitted, derived from ``obj``.
 
     Returns:
         A tuple containing the encoded binary data and an ``InspectNode`` tree.
@@ -58,24 +61,38 @@ def encode_inspect(obj: Any, fmt: Format) -> tuple[bytes, InspectNode]:
 
 
 @overload
-def decode_inspect[T](data: Buffer, fmt: Format, *, shape: type[T]) -> tuple[T, InspectNode]: ...
+def decode_inspect[T](
+    data: Buffer, fmt: Format | None = ..., *, type: type[T]
+) -> tuple[T, InspectNode]: ...
 
 
 @overload
-def decode_inspect(data: Buffer, fmt: Format, *, shape: None = None) -> tuple[Any, InspectNode]: ...
+def decode_inspect(
+    data: Buffer, fmt: Format | None = ..., *, type: None = None
+) -> tuple[Any, InspectNode]: ...
 
 
 def decode_inspect[T](
-    data: Buffer, fmt: Format, *, shape: type[T] | None = None
+    data: Buffer,
+    fmt: Format | None = None,
+    *,
+    type: type[T] | None = None,
 ) -> tuple[T | Any, InspectNode]:
     """Decode bytes into formatted object with inspection.
 
     Returns a tuple of (decoded_object, inspection_tree).
 
+    If ``fmt`` is omitted, ``type`` must be provided so fmtspec can derive
+    the format before decoding.
+
+    Raises ``ExcessDecodeError`` if trailing bytes remain after a successful
+    decode. The error carries an ``inspect_node`` with the successfully decoded
+    tree. Use ``decode_stream`` when partial consumption is intended.
+
     Args:
         data: The binary data to decode.
-        fmt: The format specification.
-        shape: Optional type to convert the result to (using msgspec).
+        fmt: The format specification. If omitted, derived from ``type``.
+        type: Optional type to convert the result to (using msgspec).
 
     Returns:
         A tuple containing the decoded value and an ``InspectNode`` tree.
@@ -86,14 +103,31 @@ def decode_inspect[T](
         >>> result["y"]
         2
     """
+    # do this here for greedy field preprocessing
+    if fmt is None:
+        if type is None:
+            raise ValueError("Either fmt or type must be provided for decoding.")
+        fmt = derive_fmt(type)
     stream = BytesIO(data)
     try:
-        result, tree = _decode_stream_impl(stream, fmt, shape=shape, inspect=True)
+        result, tree = _decode_stream_impl(stream, fmt, type=type, inspect=True)
     except DecodeError as exc:
         assert exc.inspect_node is not None  # noqa: PT017
         _attach_buffer_tree(exc.inspect_node, stream.getbuffer())
         raise
     _attach_buffer_tree(tree, stream.getbuffer())
+    cur = stream.tell()
+    remaining = len(stream.getbuffer()) - cur
+    if remaining:
+        raise ExcessDecodeError(
+            obj=result,
+            stream=stream,
+            fmt=fmt,
+            inspect_node=tree,
+            remaining=remaining,
+            start_offset=0,
+            offset=cur,
+        )
     return result, tree
 
 

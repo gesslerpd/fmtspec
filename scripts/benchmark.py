@@ -86,7 +86,7 @@ def main() -> None:
     # encode_stream(buf, obj)
     # bench(
     #     "decode: small dataclass (derive shape)",
-    #     lambda: (buf.seek(0), decode_stream(buf, shape=DataclassBench)),
+    #     lambda: (buf.seek(0), decode_stream(buf, type=DataclassBench)),
     #     args.iterations,
     #     args.repeats,
     # )
@@ -103,7 +103,7 @@ def main() -> None:
     # encode_stream(nbuf, nested)
     # bench(
     #     "decode: nested dataclass",
-    #     lambda: (nbuf.seek(0), decode_stream(nbuf, shape=NestedBench)),
+    #     lambda: (nbuf.seek(0), decode_stream(nbuf, type=NestedBench)),
     #     args.iterations,
     #     args.repeats,
     # )

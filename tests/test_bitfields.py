@@ -318,7 +318,7 @@ def test_bitfield_dataclass():
 
     assert data == b"\x12\x34\x00\x41"
 
-    result = decode(data, shape=Struct)
+    result = decode(data, type=Struct)
     assert result == obj
 
 
@@ -587,7 +587,7 @@ def test_bitfield_dataclass_with_enum():
 
     assert data == b"\x12\x34\x10"
 
-    result = decode(data, shape=StructEnum)
+    result = decode(data, type=StructEnum)
     assert result == obj
     assert not hasattr(result.other_flag, "name")
 

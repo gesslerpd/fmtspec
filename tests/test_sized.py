@@ -1,8 +1,10 @@
 """Tests for the size property on types and the Sized type."""
 
+from io import BytesIO
+
 import pytest
 
-from fmtspec import DecodeError, EncodeError, decode, encode, types
+from fmtspec import DecodeError, EncodeError, decode, decode_stream, encode, types
 
 
 def test_int_has_size() -> None:
@@ -71,10 +73,11 @@ def test_decode_simple() -> None:
     }
 
     # length=5, then 5 bytes of data, then extra byte that should not be read
-    data = b"\x00\x05hello\xff"
-    result = decode(data, fmt)
+    stream = BytesIO(b"\x00\x05hello\xff")
+    result = decode_stream(stream, fmt)
 
     assert result == {"length": 5, "data": b"hello"}
+    assert stream.read(1) == b"\xff"  # Sized did not over-read
 
 
 def test_decode_nested() -> None:
@@ -86,10 +89,11 @@ def test_decode_nested() -> None:
     }
 
     # length=5, then 5 bytes of data, then extra byte that should not be read
-    data = b"\x00\x05hello\xff"
-    result = decode(data, fmt)
+    stream = BytesIO(b"\x00\x05hello\xff")
+    result = decode_stream(stream, fmt)
 
     assert result == {"length": 5, "data": b"hello"}
+    assert stream.read(1) == b"\xff"  # Sized did not over-read
 
 
 def test_decode_with_inner_format() -> None:

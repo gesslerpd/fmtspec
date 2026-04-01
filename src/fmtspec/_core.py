@@ -9,7 +9,7 @@ from typing import Any, BinaryIO, Literal, assert_never, get_type_hints, overloa
 
 import msgspec
 
-from ._exceptions import DecodeError, EncodeError, ShapeError
+from ._exceptions import DecodeError, EncodeError, ExcessDecodeError, TypeConversionError
 from ._protocol import Context, Format, InspectNode
 from ._stream import (
     _decode_stream,
@@ -261,11 +261,11 @@ def _to_builtins(obj: Any, recursive: bool) -> Any:
     return result
 
 
-def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
+def _convert[T](obj: Any, type_cls: type[T], recursive: bool) -> T:
     try:
         return msgspec.convert(
             obj,
-            shape,
+            type_cls,
             from_attributes=True,  # allow conversion from Type objects that return dataclasses
             dec_hook=None if recursive else _msgspec_decode_hook,
             builtin_types=BUILTIN_TYPES,
@@ -273,15 +273,51 @@ def _convert[T](obj: Any, shape: type[T], recursive: bool) -> T:
     except msgspec.DecodeError:
         if not recursive:
             raise
-        # handle (fmt, shape) pairs that have mismatched types?
+        # handle (fmt, type) pairs that have mismatched types?
         # `strict=False` doesn't work, fallback to manual construction
         if isinstance(obj, Mapping):
             result = {}
             for k, y in obj.items():
-                types = get_type_hints(shape)
-                result[k] = _convert(y, types[k], recursive=recursive)
-            return _create_new_instance(shape, result)
+                hints = get_type_hints(type_cls)
+                result[k] = _convert(y, hints[k], recursive=recursive)
+            return _create_new_instance(type_cls, result)
     return obj
+
+
+class WriteStreamWrapper(BinaryIO):
+    """Compatibility wrapper for non-seekable streams."""
+
+    __slots__ = ("_offset", "_stream")
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = stream
+        self._offset = 0
+
+    def write(self, data: Buffer) -> int:
+        n = self._stream.write(data)
+        self._offset += n
+        return n
+
+    def tell(self) -> int:
+        return self._offset
+
+
+class ReadStreamWrapper(BinaryIO):
+    """Compatibility wrapper for non-seekable streams."""
+
+    __slots__ = ("_offset", "_stream")
+
+    def __init__(self, stream: BinaryIO) -> None:
+        self._stream = stream
+        self._offset = 0
+
+    def read(self, size: int = -1) -> bytes:
+        data = self._stream.read(size)
+        self._offset += len(data)
+        return data
+
+    def tell(self) -> int:
+        return self._offset
 
 
 @overload
@@ -315,7 +351,11 @@ def _encode_stream_impl(
     # FUTURE: enable recursive to support standard classes?
     obj = _to_builtins(obj, recursive=False)
 
-    ctx = Context(inspect=inspect)
+    if not stream.seekable():
+        stream = WriteStreamWrapper(stream)
+
+    start_offset = stream.tell()
+    ctx = Context(inspect=inspect, start_offset=start_offset)
 
     try:
         # specify key=None for root node
@@ -324,15 +364,19 @@ def _encode_stream_impl(
         assert_never(e)  # type: ignore
         raise
     except Exception as e:
+        parents = ctx.parents
         raise EncodeError(
             message=repr(e),
             obj=obj,
             stream=stream,
             fmt=ctx.fmt,
-            context=ctx.parents[-1],
+            context=parents[1] if len(parents) > 1 else parents[0],
+            local_context=parents[-1],
             cause=e,
             path=tuple(ctx.path),
             inspect_node=ctx.inspect_node,
+            start_offset=start_offset,
+            offset=stream.tell(),
         ) from e
 
     if tree:
@@ -360,7 +404,7 @@ def encode_stream(stream: BinaryIO, obj: Any, fmt: Format | None = None) -> None
 
 @overload
 def _decode_stream_impl[T](
-    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T], inspect: Literal[False] = False
+    stream: BinaryIO, fmt: Format | None = None, *, type: type[T], inspect: Literal[False] = False
 ) -> tuple[T, None]: ...
 
 
@@ -369,41 +413,45 @@ def _decode_stream_impl(
     stream: BinaryIO,
     fmt: Format | None = None,
     *,
-    shape: None = None,
+    type: None = None,
     inspect: Literal[False] = False,
 ) -> tuple[Any, None]: ...
 
 
 @overload
 def _decode_stream_impl[T](
-    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T], inspect: Literal[True]
+    stream: BinaryIO, fmt: Format | None = None, *, type: type[T], inspect: Literal[True]
 ) -> tuple[T, InspectNode]: ...
 
 
 @overload
 def _decode_stream_impl(
-    stream: BinaryIO, fmt: Format | None = None, *, shape: None = None, inspect: Literal[True]
+    stream: BinaryIO, fmt: Format | None = None, *, type: None = None, inspect: Literal[True]
 ) -> tuple[Any, InspectNode]: ...
 
 
-def _decode_stream_impl[T](
+def _decode_stream_impl[T](  # noqa: PLR0912
     stream: BinaryIO,
     fmt: Format | None = None,
     *,
-    shape: type[T] | None = None,
+    type: type[T] | None = None,
     inspect: bool = False,
 ) -> tuple[T, InspectNode | None] | tuple[Any, InspectNode | None]:
-    # derive format from the provided shape when not given
+    # derive format from the provided type when not given
     if fmt is None:
-        if shape is None:
-            raise ValueError("Either fmt or shape must be provided for decoding.")
-        fmt = derive_fmt(shape)
+        if type is None:
+            raise ValueError("Either fmt or type must be provided for decoding.")
+        fmt = derive_fmt(type)
 
     # FUTURE: reenable generic Annotated formats?
     # else:
     #     fmt = _normalize_format(fmt)
 
-    ctx = Context(inspect=inspect)
+    if not stream.seekable():
+        stream = ReadStreamWrapper(stream)
+
+    start_offset = stream.tell()
+    ctx = Context(inspect=inspect, start_offset=start_offset)
 
     try:
         # specify key=None for root node
@@ -412,43 +460,56 @@ def _decode_stream_impl[T](
         assert_never(e)  # type: ignore
         raise
     except Exception as e:
-        context = ctx.parents[-1]
+        parents = ctx.parents
+        local_context = parents[-1]
         obj = None
         # FUTURE: set to None and add deferred conversion attempt as method on DecodeError?
-        if shape is not None:
+        if type is not None:
             try:
-                obj = _convert(context, shape, recursive=False)
+                obj = _convert(local_context, type, recursive=False)
             except msgspec.DecodeError:
                 pass
+        # Stitch partially-decoded tree: link consecutive dict parents
+        # via the string path keys so context gives the full partial result.
+        path = ctx.path
+        if len(parents) > 2:  # noqa: PLR2004
+            pi = 0  # path index
+            for i in range(1, len(parents) - 1):
+                # advance past non-string (list index) path segments
+                while pi < len(path) and not isinstance(path[pi], str):
+                    pi += 1
+                if pi < len(path) and isinstance(parents[i], dict):
+                    parents[i][path[pi]] = parents[i + 1]
+                    pi += 1
+                else:
+                    break
         raise DecodeError(
             message=repr(e),
             obj=obj,
             stream=stream,
             fmt=ctx.fmt,
-            context=context,
+            context=parents[1] if len(parents) > 1 else parents[0],
+            local_context=local_context,
             cause=e,
-            path=tuple(ctx.path),
+            path=tuple(path),
             inspect_node=ctx.inspect_node,
+            start_offset=start_offset,
+            offset=stream.tell(),
         ) from e
     # perf: only recursively convert once as post-process operation
-    if shape is not None:
+    if type is not None:
         # FUTURE: enable recursive to support standard classes?
         try:
-            result = _convert(result, shape, recursive=False)
+            result = _convert(result, type, recursive=False)
         except msgspec.DecodeError as e:
-            # FUTURE: rename ConvertError?
-            raise ShapeError(
-                message=f"Decoded object does not conform to expected shape {shape}: {e}",
+            raise TypeConversionError(
+                message=f"Decoded object does not conform to expected type {type}: {e}",
                 obj=result,
-                stream=stream,
+                type=type,
                 fmt=fmt,
-                # context empty here?
-                context=result,
                 cause=e,
-                path=(),
                 inspect_node=ctx.inspect_node,
             ) from e
-
     if tree:
         # FUTURE: do this for exceptions inspect_node too?
         _normalize_inspect_tree(tree.children, tree.offset)
@@ -457,20 +518,23 @@ def _decode_stream_impl[T](
 
 
 @overload
-def decode_stream[T](stream: BinaryIO, fmt: Format | None = None, *, shape: type[T]) -> T: ...
+def decode_stream[T](stream: BinaryIO, fmt: Format | None = None, *, type: type[T]) -> T: ...
 
 
 @overload
-def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, shape: None = None) -> Any: ...
+def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, type: None = None) -> Any: ...
 
 
 def decode_stream[T](
-    stream: BinaryIO, fmt: Format | None = None, *, shape: type[T] | None = None
+    stream: BinaryIO, fmt: Format | None = None, *, type: type[T] | None = None
 ) -> T | Any:
     """Decode a value directly from stream.
 
-    If ``fmt`` is omitted, ``shape`` must be provided so fmtspec can derive
+    If ``fmt`` is omitted, ``type`` must be provided so fmtspec can derive
     the format before decoding.
+
+    The stream is left positioned immediately after the decoded data. Trailing
+    bytes are not an error — call ``stream.read()`` to access any remainder.
 
     Example:
         >>> from io import BytesIO
@@ -478,7 +542,7 @@ def decode_stream[T](
         >>> decode_stream(BytesIO(b'\x00\x07'), types.u16)
         7
     """
-    return _decode_stream_impl(stream, fmt, shape=shape)[0]
+    return _decode_stream_impl(stream, fmt, type=type)[0]
 
 
 def encode(obj: Any, fmt: Format | None = None) -> bytes:
@@ -495,24 +559,18 @@ def encode(obj: Any, fmt: Format | None = None) -> bytes:
 
 
 @overload
-def decode[T](
-    data: Buffer, fmt: Format | None = None, *, shape: type[T], strict: bool = False
-) -> T: ...
+def decode[T](data: Buffer, fmt: Format | None = None, *, type: type[T]) -> T: ...
 
 
 @overload
-def decode(
-    data: Buffer, fmt: Format | None = None, *, shape: None = None, strict: bool = False
-) -> Any: ...
+def decode(data: Buffer, fmt: Format | None = None, *, type: None = None) -> Any: ...
 
 
-def decode[T](
-    data: Buffer, fmt: Format | None = None, *, shape: type[T] | None = None, strict: bool = False
-) -> T | Any:
+def decode[T](data: Buffer, fmt: Format | None = None, *, type: type[T] | None = None) -> T | Any:
     """Decode a value from bytes.
 
-    When ``strict`` is true, fmtspec raises ``DecodeError`` if trailing bytes
-    remain after the decode succeeds.
+    Raises ``ExcessDecodeError`` if trailing bytes remain after a successful
+    decode. Use ``decode_stream`` when partial consumption is intended.
 
     Example:
         >>> from fmtspec import decode, types
@@ -521,33 +579,29 @@ def decode[T](
     """
     # do this here for greedy field preprocessing
     if fmt is None:
-        if shape is None:
-            raise ValueError("Either fmt or shape must be provided for decoding.")
-        fmt = derive_fmt(shape)
+        if type is None:
+            raise ValueError("Either fmt or type must be provided for decoding.")
+        fmt = derive_fmt(type)
 
     # if isinstance(fmt, Mapping):
     #     # preprocess to detect greedy field and wrap in Sized with fixed length
     #     fmt = _preprocess_greedy_fmt(data, fmt)
     stream = BytesIO(data)
-    result = decode_stream(stream, fmt=fmt, shape=shape)
-    # If requested, check for any trailing data after successful decode
-    if strict:
-        cur = stream.tell()
-        end = stream.seek(0, io.SEEK_END)
-        stream.seek(cur)
-        remaining = end - cur
-        if remaining:
-            raise DecodeError(
-                message=f"Excess data after decoding ({remaining} bytes)",
-                obj=result,
-                stream=stream,
-                fmt=fmt,
-                # context empty here?
-                context=result,
-                cause=None,
-                path=(),
-                inspect_node=None,
-            )
+    result = decode_stream(stream, fmt=fmt, type=type)
+    cur = stream.tell()
+    end = stream.seek(0, io.SEEK_END)
+    stream.seek(cur)
+    remaining = end - cur
+    if remaining:
+        raise ExcessDecodeError(
+            obj=result,
+            stream=stream,
+            fmt=fmt,
+            inspect_node=None,
+            remaining=remaining,
+            start_offset=0,
+            offset=cur,
+        )
     return result
 
 

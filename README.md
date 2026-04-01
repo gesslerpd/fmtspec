@@ -114,7 +114,7 @@ class Record:
 
 record = Record(name="widget", count=3)
 data = encode(record)
-roundtripped = decode(data, shape=Record)
+roundtripped = decode(data, type=Record)
 assert roundtripped == record
 ```
 
@@ -277,14 +277,17 @@ instances.
 
 - `EncodeError`: a Python value could not be serialized with the chosen format
 - `DecodeError`: the incoming bytes did not match the format
-- `ShapeError`: decoding succeeded, but the result could not be converted into
-  the requested `shape`
+- `ExcessDecodeError`: decoding succeeded, but trailing bytes remained;
+  distinct from `DecodeError` — `exc.stream` is positioned at the excess data
+  for further decoding, and `exc.remaining` holds a typed byte count
+- `TypeConversionError`: decoding succeeded, but the result could not be converted into
+  the requested `type`
 
 These exceptions preserve context such as the active format, object, path,
 cause, and optional inspection node.
 
 ```python
-from fmtspec import DecodeError, decode, types
+from fmtspec import DecodeError, ExcessDecodeError, decode, types
 
 fmt = {
     "kind": types.u8,
@@ -292,11 +295,16 @@ fmt = {
 }
 
 try:
-    decode(b"\x01\x05abc", fmt, strict=True)
-except DecodeError as exc:
-    print(exc)
+    decode(b"\x01\x05abc", fmt)
+except ExcessDecodeError as exc:
+    # remaining bytes are accessible for further parsing
+    print(exc.remaining)  # typed byte count
+    print(exc.stream.read())  # or decode_stream(exc.stream, next_fmt)
     print(exc.path)
     print(exc.fmt)
+except DecodeError as exc:
+    # real decode failure (truncation, bad tag, etc.)
+    print(exc)
 ```
 
 This context is especially useful with nested mappings, arrays, `Switch(...)`,
