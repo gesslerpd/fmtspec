@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import Any, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
-from ._protocol import Context, Format, InspectNode
 from ._utils import _group_bitfields
+
+if TYPE_CHECKING:
+    from ._protocol import Context, Format, InspectNode
 
 # keep this file stdlib/protocol-only to avoid circular imports
 

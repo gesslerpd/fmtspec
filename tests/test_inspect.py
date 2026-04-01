@@ -250,8 +250,6 @@ class TestDecodeInspect:
 
     def test_stream_allows_trailing_bytes(self):
         """Test that decode_stream allows trailing bytes."""
-        from io import BytesIO
-
         fmt = types.Int(byteorder="big", signed=False, size=2)
         stream = BytesIO(b"\x01\x02\xff\xff")
         result = fmtspec.decode_stream(stream, fmt)

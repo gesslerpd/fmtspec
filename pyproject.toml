@@ -1,6 +1,6 @@
 [project]
 name = "fmtspec"
-version = "0.4.0"
+version = "0.5.0"
 description = "A flexible binary format serialization library for Python"
 readme = "README.md"
 classifiers = [
@@ -31,7 +31,7 @@ keywords = [
 authors = [
     { name = "Peter Gessler", email = "gesslerpd@users.noreply.github.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "msgspec>=0.20.0",
 ]

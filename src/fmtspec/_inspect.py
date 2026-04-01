@@ -76,7 +76,7 @@ def decode_inspect[T](
     data: Buffer,
     fmt: Format | None = None,
     *,
-    type: type[T] | None = None,
+    type: type[T] | None = None,  # noqa: A002
 ) -> tuple[T | Any, InspectNode]:
     """Decode bytes into formatted object with inspection.
 

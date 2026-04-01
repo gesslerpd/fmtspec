@@ -434,7 +434,7 @@ def _decode_stream_impl[T](  # noqa: PLR0912
     stream: BinaryIO,
     fmt: Format | None = None,
     *,
-    type: type[T] | None = None,
+    type: type[T] | None = None,  # noqa: A002
     inspect: bool = False,
 ) -> tuple[T, InspectNode | None] | tuple[Any, InspectNode | None]:
     # derive format from the provided type when not given
@@ -526,7 +526,10 @@ def decode_stream(stream: BinaryIO, fmt: Format | None = None, *, type: None = N
 
 
 def decode_stream[T](
-    stream: BinaryIO, fmt: Format | None = None, *, type: type[T] | None = None
+    stream: BinaryIO,
+    fmt: Format | None = None,
+    *,
+    type: type[T] | None = None,  # noqa: A002
 ) -> T | Any:
     """Decode a value directly from stream.
 
@@ -566,7 +569,7 @@ def decode[T](data: Buffer, fmt: Format | None = None, *, type: type[T]) -> T: .
 def decode(data: Buffer, fmt: Format | None = None, *, type: None = None) -> Any: ...
 
 
-def decode[T](data: Buffer, fmt: Format | None = None, *, type: type[T] | None = None) -> T | Any:
+def decode[T](data: Buffer, fmt: Format | None = None, *, type: type[T] | None = None) -> T | Any:  # noqa: A002
     """Decode a value from bytes.
 
     Raises ``ExcessDecodeError`` if trailing bytes remain after a successful
