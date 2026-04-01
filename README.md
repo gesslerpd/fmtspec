@@ -75,7 +75,7 @@ data = encode(packet_tuple, no_map_packet_fmt)
 assert data == b"widget\0\x03\x00\x00\x00"
 
 decoded = decode(data, no_map_packet_fmt)
-assert decoded == packet_tuple
+assert tuple(decoded) == packet_tuple
 ```
 
 This is the core fmtspec style: combine primitive format objects into mappings,
