@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
-from .._stream import _decode_stream, _encode_stream
+from ..stream import decode_stream, encode_stream
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,9 +46,9 @@ class Lazy:
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         """Encode by delegating to the lazily-resolved format."""
         fmt = self.get_format()
-        _encode_stream(stream, value, fmt, context=context)
+        encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         """Decode by delegating to the lazily-resolved format."""
         fmt = self.get_format()
-        return _decode_stream(stream, fmt, context=context)[0]
+        return decode_stream(stream, fmt, context=context)

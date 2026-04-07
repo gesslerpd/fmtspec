@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
 import msgspec
 
-from .._stream import _decode_stream, _encode_stream
 from .._utils import derive_fmt
+from ..stream import decode_stream, encode_stream
 from ._ref import Ref
 
 if TYPE_CHECKING:
@@ -72,7 +72,7 @@ class Switch:
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         key_value = self.key.resolve(context)
         fmt = self._get_fmt(key_value)
-        _encode_stream(stream, value, fmt, context=context)
+        encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         inner_data = stream.read()
@@ -80,7 +80,7 @@ class Switch:
         fmt = self._get_fmt(key_value)
 
         inner_stream = BytesIO(inner_data)
-        return _decode_stream(inner_stream, fmt, context=context)[0]
+        return decode_stream(inner_stream, fmt, context=context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,7 +172,7 @@ class TaggedUnion:
     def _decode_tag(self, stream: BinaryIO, *, context: Context) -> Any:
         if isinstance(self.tag, Ref):
             return self.tag.resolve(context)
-        return _decode_stream(stream, self.tag, context=context)[0]
+        return decode_stream(stream, self.tag, context=context)
 
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         unknown_type = ValueError("Unknown type")
@@ -188,8 +188,8 @@ class TaggedUnion:
             raise unknown_type
 
         if write_tag:
-            _encode_stream(stream, tag_val, self.tag, context=context)
-        _encode_stream(stream, value, fmt, context=context)
+            encode_stream(stream, tag_val, self.tag, context=context)
+        encode_stream(stream, value, fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         tag = self._decode_tag(stream, context=context)
@@ -201,4 +201,4 @@ class TaggedUnion:
             raise ValueError(f"Unknown tag: {tag!r}")
 
         struct_cls = self.struct_cls_by_tag[tag]
-        return msgspec.convert(_decode_stream(stream, fmt, context=context)[0], struct_cls)
+        return msgspec.convert(decode_stream(stream, fmt, context=context), struct_cls)

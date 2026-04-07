@@ -9,8 +9,8 @@ from collections.abc import Iterable, Iterator
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from .._stream import _decode_stream, _encode_stream
 from .._utils import sizeof
+from ..stream import decode_stream, encode_stream
 from ._float import Float
 from ._int import Int
 from ._ref import Ref
@@ -270,7 +270,7 @@ class Array:
             # Leaf level: encode elements directly
             for i, elem in enumerate(v):
                 context.push_path(i)
-                _encode_stream(stream, elem, elem_fmt, context=context, key=i)
+                encode_stream(stream, elem, elem_fmt, context=context, key=i)
                 context.pop_path()
         else:
             # Non-leaf level: create intermediate nodes for each sub-array
@@ -318,7 +318,7 @@ class Array:
         if not self.dims:
             for i, elem in enumerate(value):
                 context.push_path(i)
-                _encode_stream(stream, elem, self.element_fmt, context=context, key=i)
+                encode_stream(stream, elem, self.element_fmt, context=context, key=i)
                 context.pop_path()
             return
 
@@ -341,7 +341,7 @@ class Array:
             result = []
             for i in range(count):
                 context.push_path(i)
-                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                value = decode_stream(stream, elem_fmt, context=context, key=i)
                 result.append(value)
                 context.pop_path()
             return result
@@ -427,7 +427,7 @@ class Array:
             result = []
             for i in range(count):
                 context.push_path(i)
-                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                value = decode_stream(stream, elem_fmt, context=context, key=i)
                 result.append(value)
                 context.pop_path()
             return result
@@ -438,7 +438,7 @@ class Array:
         while True:
             try:
                 context.push_path(i)
-                value = _decode_stream(stream, elem_fmt, context=context, key=i)[0]
+                value = decode_stream(stream, elem_fmt, context=context, key=i)
                 items.append(value)
                 context.pop_path()
                 i += 1

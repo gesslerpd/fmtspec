@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar
 
-from .._stream import _decode_stream, _encode_stream
+from ..stream import decode_stream, encode_stream
 
 if TYPE_CHECKING:
     from types import EllipsisType
@@ -27,10 +27,10 @@ class Optional:
 
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         if value is not None:
-            _encode_stream(stream, value, self.fmt, context=context)
+            encode_stream(stream, value, self.fmt, context=context)
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
         try:
-            return _decode_stream(stream, self.fmt, context=context)[0]
+            return decode_stream(stream, self.fmt, context=context)
         except EOFError:
             return None

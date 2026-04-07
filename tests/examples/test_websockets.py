@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
-from io import BytesIO
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
@@ -57,21 +56,12 @@ FRAME_HEADER_LENGTH_FMT = types.Bitfields(
 )
 
 
-def _payload_wire_length(payload: Any, *, is_text: bool) -> int:
-    buf = BytesIO()
-    if is_text:
-        types.Str().encode(buf, payload)
-    else:
-        types.Bytes().encode(buf, bytes(payload))
-    return len(buf.getvalue())
-
-
 def _payload_fmt(*, is_text: bool, size: int):
     return types.Str(size) if is_text else types.Bytes(size)
 
 
 def _encode_payload(payload: Any, stream, *, is_text: bool, context, key: str) -> None:
-    size = _payload_wire_length(payload, is_text=is_text)
+    size = len(payload.encode("utf-8") if is_text else bytes(payload))
     payload_fmt = _payload_fmt(is_text=is_text, size=size)
     encode_stream(stream, payload, payload_fmt, context=context, key=key)
 
@@ -195,7 +185,7 @@ class InitialFrame:
             raise ValueError(f"Missing {payload_key!r} for initial frame")
 
         payload = value[payload_key]
-        header["len_payload"] = _payload_wire_length(payload, is_text=is_text)
+        header["len_payload"] = len(payload.encode("utf-8") if is_text else bytes(payload))
         context.push_path("header")
         encode_stream(stream, header, self.header_fmt, context=context, key="header")
         context.pop_path()
@@ -239,7 +229,7 @@ class DataFrame:
             raise ValueError(f"Missing {payload_key!r} for trailing dataframe")
 
         payload = value[payload_key]
-        header["len_payload"] = _payload_wire_length(payload, is_text=self.text_mode)
+        header["len_payload"] = len(payload.encode("utf-8") if self.text_mode else bytes(payload))
         context.push_path("header")
         encode_stream(stream, header, self.header_fmt, context=context, key="header")
         context.pop_path()
