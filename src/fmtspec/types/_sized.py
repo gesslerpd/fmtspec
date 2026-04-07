@@ -25,8 +25,6 @@ class Sized:
     - a `Ref`: read sibling value from `context` (no length header written)
     - a format/type: encode/decode the length using that format
 
-    `factor` multiplies the decoded length to get byte count (e.g., factor=2 for word count).
-
     Example:
         >>> from fmtspec import decode, encode, types
         >>> fmt = types.Sized(length=types.u8, fmt=types.Bytes())
@@ -39,8 +37,10 @@ class Sized:
     _: KW_ONLY
     align: int | None = None
     fill: bytes = b"\x00"
-    # FUTURE: allow factor to be 2 callables for encode/decode?
-    factor: int = 1
+    # FUTURE: if real formats need length fields expressed in non-byte units,
+    # add explicit length encode/decode converters here rather than reviving a
+    # broad `factor` knob. `types.Converter` may help adapt the length field,
+    # but it is not a direct replacement for Sized's framing logic.
     inline: bool = False
     size: int | EllipsisType = field(init=False, repr=False, compare=False)
 
@@ -72,46 +72,43 @@ class Sized:
         buf = BytesIO()
         encode_stream(buf, value, self.fmt, context=context)
         encoded = buf.getvalue()
-        n = len(encoded)
+        length = len(encoded)
 
         if isinstance(self.length, Ref):
             expected = self.length.resolve(context)
-            if n != expected:
+            if length != expected:
                 raise ValueError(
-                    f"Encoded length {n} does not match expected length {expected} from key {self.length!r}"
+                    f"Encoded length {length} does not match expected length {expected} from key {self.length!r}"
                 )
             write_all(stream, encoded)
-            pad = self._pad_len(n)
+            pad = self._pad_len(length)
             if pad:
                 write_all(stream, self.fill * pad)
             return
 
         if isinstance(self.length, int):
             fixed = self.length
-            if n > fixed:
-                raise ValueError(f"Encoded length {n} exceeds fixed size {fixed}")
+            if length > fixed:
+                raise ValueError(f"Encoded length {length} exceeds fixed size {fixed}")
             write_all(stream, encoded)
-            pad = fixed - n
+            pad = fixed - length
             if pad:
                 write_all(stream, self.fill * pad)
             return
 
         # length is a format/type: write length first, then data
-        if n % self.factor != 0:
-            raise ValueError(f"Encoded length {n} is not divisible by factor {self.factor}")
-        length_value = n // self.factor
         start = stream.tell()
-        self.length.encode(stream, length_value, context=context)
+        self.length.encode(stream, length, context=context)
         context.inspect_leaf(
             stream,
             "--size--",
             self.length,
-            length_value,
+            length,
             start,
             prepend=True,
         )
         write_all(stream, encoded)
-        pad = self._pad_len(n)
+        pad = self._pad_len(length)
         if pad:
             write_all(stream, self.fill * pad)
 
@@ -137,9 +134,8 @@ class Sized:
 
         # length is a format: decode it from stream, then read that many bytes
         start = stream.tell()
-        length_value = self.length.decode(stream, context=context)
-        context.inspect_leaf(stream, "--size--", self.length, length_value, start)
-        length = length_value * self.factor
+        length = self.length.decode(stream, context=context)
+        context.inspect_leaf(stream, "--size--", self.length, length, start)
         data = read_exactly(stream, length)
         pad_len = self._pad_len(length)
         if pad_len:
