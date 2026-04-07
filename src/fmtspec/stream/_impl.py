@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from io import SEEK_CUR, BytesIO
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -105,3 +106,14 @@ def peek(stream: BinaryIO, size: int, /) -> bytes:
     data = read_exactly(stream, size)
     stream.seek(-size, SEEK_CUR)
     return data
+
+
+@contextmanager
+def seek_to(stream: BinaryIO, offset: int, /):
+    """Temporarily seek to an absolute offset and restore the previous position."""
+    current = stream.tell()
+    stream.seek(offset)
+    try:
+        yield
+    finally:
+        stream.seek(current)

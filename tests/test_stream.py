@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from fmtspec import decode_stream, encode_stream, types
-from fmtspec.stream import peek, read_exactly, write_all
+from fmtspec.stream import peek, read_exactly, seek_to, write_all
 
 
 def test_roundtrip():
@@ -186,6 +186,29 @@ def test_peek_does_not_advance_stream_position():
     assert data == bytearray(b"cde")
     assert stream.tell() == 2
     assert stream.read(2) == b"cd"
+
+
+def test_seek_to_restores_stream_position() -> None:
+    stream = BytesIO(b"abcdef")
+    stream.seek(1)
+
+    with seek_to(stream, 4):
+        assert stream.tell() == 4
+        assert stream.read(1) == b"e"
+
+    assert stream.tell() == 1
+    assert stream.read(2) == b"bc"
+
+
+def test_seek_to_restores_stream_position_on_error() -> None:
+    stream = BytesIO(b"abcdef")
+    stream.seek(2)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        with seek_to(stream, 5):
+            raise RuntimeError("boom")
+
+    assert stream.tell() == 2
 
 
 def test_write_all_writes_partial_stream_until_complete():
