@@ -270,6 +270,20 @@ Output (truncated for brevity):
 The inspection tree provides visibility into the full parse structure, including
 offsets and sizes at each nesting level.
 
+The same format also works with the stream-based `encode_stream` and `decode_stream` functions:
+
+```python
+from io import BytesIO
+
+from fmtspec import decode_stream, encode_stream
+
+stream = BytesIO()
+encode_stream(stream, client_hello, tls_client_hello_fmt)
+
+stream.seek(0)
+assert decode_stream(stream, tls_client_hello_fmt) == client_hello
+```
+
 ## Error Model
 
 The public API raises structured exceptions instead of only raw `ValueError`
@@ -321,3 +335,5 @@ These reference pages cover the details by topic:
 - [docs/types-api.md](docs/types-api.md) for `fmtspec.types`
 - [docs/stream-api.md](docs/stream-api.md) for custom `Type` implementations,
   `Context`, and `fmtspec.stream`
+- [docs/lib-api.md](docs/lib-api.md) for `fmtspec.lib` — ready-made library of formats built with this framework (e.g. ASN.1 BER/DER, MessagePack)
+
