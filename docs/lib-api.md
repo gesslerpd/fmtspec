@@ -54,7 +54,7 @@ result = decode(encode(node, asn1), asn1)
 assert result["tag_class"] == ASN1Class.CONTEXT
 assert result["value"][0]["value"] == 5
 
-# Composed with fmtspec.types
+# Composed with other fmtspec.types primitives
 fmt = {"version": types.u8, "body": asn1}
 data = encode({"version": 1, "body": {"tag": UniversalTag.INTEGER, "value": 42}}, fmt)
 assert decode(data, fmt)["body"]["value"] == 42

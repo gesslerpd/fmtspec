@@ -1,7 +1,7 @@
 [project]
 name = "fmtspec"
-version = "0.5.0"
-description = "A flexible binary format serialization library for Python"
+version = "0.6.0"
+description = "A fast and flexible binary format serialization library for Python"
 readme = "README.md"
 classifiers = [
     "Operating System :: OS Independent",
@@ -18,11 +18,11 @@ keywords = [
     "binary",
     "formats",
     "protocols",
-    "wire",
     "packets",
     "parsing",
     "msgpack",
     "msgspec",
+    "asn1",
     "dataclasses",
     "inspection",
     "stream",
