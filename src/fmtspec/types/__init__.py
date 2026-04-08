@@ -35,8 +35,8 @@ from ._lazy import Lazy as Lazy
 from ._literal import Literal as Literal
 from ._literal import Null as Null, null as null
 from ._optional import Optional as Optional
-from ._pointer import Pointer as Pointer, PointerValue as PointerValue
 from ._sized import Sized as Sized
+# from ._pointer import Pointer as Pointer
 
 from ._str import Str as Str, str_ as str_, str_utf8 as str_utf8, str_ascii as str_ascii
 from ._switch import Switch as Switch

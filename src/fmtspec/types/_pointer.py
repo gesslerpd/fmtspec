@@ -25,14 +25,6 @@ def _resolve_offset(value: OffsetResolver, context: Context) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class PointerValue:
-    """Explicit offset/value pair used when encoding a Pointer."""
-
-    offset: int
-    value: Any
-
-
-@dataclass(frozen=True, slots=True)
 class Pointer:
     """Read or write a value stored elsewhere in the stream via an offset field.
 
@@ -41,8 +33,7 @@ class Pointer:
     the same seekable stream, after which the original cursor position is restored.
 
     The decoded result is the pointed value rather than the offset. For encoding,
-    the caller must provide a ``PointerValue`` or mapping with both the offset and
-    pointed value.
+    the caller must provide a mapping with both the offset and pointed value.
     """
 
     offset: Type
@@ -66,13 +57,9 @@ class Pointer:
         return absolute_offset
 
     def _split_value(self, value: Any) -> tuple[int, Any]:
-        if isinstance(value, PointerValue):
-            return value.offset, value.value
         if isinstance(value, Mapping):
             return int(value[self.offset_key]), value[self.value_key]
-        raise TypeError(
-            "Pointer.encode expects PointerValue or a mapping with offset/value entries"
-        )
+        raise TypeError("Pointer.encode expects a mapping with offset/value entries")
 
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
         offset_value, pointed_value = self._split_value(value)

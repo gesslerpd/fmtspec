@@ -1,16 +1,17 @@
 from io import BytesIO
 
 from fmtspec import decode, decode_stream, encode, encode_inspect, types
+from fmtspec.types._pointer import Pointer
 
 
 def test_pointer_roundtrip_with_ref_base() -> None:
     fmt = {
         "base": types.u8,
-        "payload": types.Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
+        "payload": Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
     }
     obj = {
         "base": 2,
-        "payload": types.PointerValue(offset=2, value=b"XYZ"),
+        "payload": {"offset": 2, "value": b"XYZ"},
     }
 
     data = encode(obj, fmt)
@@ -22,7 +23,7 @@ def test_pointer_roundtrip_with_ref_base() -> None:
 def test_pointer_accepts_mapping_encode_value() -> None:
     fmt = {
         "base": types.u8,
-        "payload": types.Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
+        "payload": Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
     }
     obj = {
         "base": 2,
@@ -35,11 +36,11 @@ def test_pointer_accepts_mapping_encode_value() -> None:
 def test_pointer_inspect_exposes_offset_and_value_children() -> None:
     fmt = {
         "base": types.u8,
-        "payload": types.Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
+        "payload": Pointer(offset=types.u8, fmt=types.Bytes(3), base=types.Ref("base")),
     }
     obj = {
         "base": 2,
-        "payload": types.PointerValue(offset=2, value=b"XYZ"),
+        "payload": {"offset": 2, "value": b"XYZ"},
     }
 
     encoded, tree = encode_inspect(obj, fmt)
@@ -52,7 +53,7 @@ def test_pointer_inspect_exposes_offset_and_value_children() -> None:
 
 
 def test_pointer_null_offset_returns_null_value() -> None:
-    fmt = types.Pointer(offset=types.u8, fmt=types.Bytes(2), allow_null=True, null_value=None)
+    fmt = Pointer(offset=types.u8, fmt=types.Bytes(2), allow_null=True, null_value=None)
 
     assert decode(b"\x00", fmt) is None
-    assert encode(types.PointerValue(offset=0, value=b"XX"), fmt) == b"\x00"
+    assert encode({"offset": 0, "value": b"XX"}, fmt) == b"\x00"
