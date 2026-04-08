@@ -54,13 +54,13 @@ def main() -> None:
 
     # 32-bit unsigned little-endian integers
     elem_fmt = types.u32le
-    arr_fmt = types.Array(elem_fmt, (rows, cols))
+    arr_fmt = types.Array(elem_fmt, dims=(rows, cols))
 
     float_fmt = types.f32be
-    float_arr_fmt = types.Array(float_fmt, (rows, cols))
+    float_arr_fmt = types.Array(float_fmt, dims=(rows, cols))
 
     complex_fmt = types.Sized(types.u32le, types.bytes_)
-    complex_arr_fmt = types.Array(complex_fmt, (rows, cols // 2))
+    complex_arr_fmt = types.Array(complex_fmt, dims=(rows, cols // 2))
 
     value = make_array(4, (rows, cols))
     complex_value = make_array(b"\x00\x00\x00\x00", (rows, cols // 2))

@@ -3,18 +3,10 @@
 
 from __future__ import annotations
 
-import sys
 import time
 
 from fmtspec import decode, encode
-
-sys.path.insert(0, "tests/examples")
-try:
-    from test_msgpack import MsgPack
-
-    msgpack_fmt = MsgPack()
-except Exception:
-    msgpack_fmt = None
+from fmtspec.lib.msgpack import msgpack as msgpack_fmt
 
 payload = {
     "id": 1,

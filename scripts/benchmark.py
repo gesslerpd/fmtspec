@@ -13,7 +13,6 @@ import os
 os.environ["MSGPACK_PUREPYTHON"] = "1"
 import argparse
 import statistics
-import sys
 import time
 from dataclasses import dataclass
 from typing import Annotated, ClassVar
@@ -25,8 +24,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency for benchmarks
     msgpack = None
 
-sys.path.insert(0, "tests/examples")
-from test_msgpack import MsgPack
+from fmtspec.lib.msgpack import MsgPack
 
 msgpack_fmt = MsgPack()
 
