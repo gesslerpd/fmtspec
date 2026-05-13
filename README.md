@@ -27,8 +27,10 @@ $ uv add fmtspec
 - `encode(...)` and `decode(...)` for in-memory byte buffers
 - `encode_stream(...)` and `decode_stream(...)` for files, sockets, and
   `BytesIO`
+- Type-safe support for annotated dataclasses and `msgspec.Struct`
 - `fmtspec.types` for reusable primitives such as integers, enums, arrays, sized
   fields, bitfields, and tagged layouts
+- `fmtspec.lib` for a collection of ready-made embeddable formats (e.g. [MessagePack](https://msgpack.org/index.html))
 - `encode_inspect(...)`, `decode_inspect(...)`, and `format_tree(...)` for
   inspecting parse trees during encoding and decoding
 - Informative exceptions with failure paths and format context
@@ -94,7 +96,7 @@ stream.seek(0)
 assert decode_stream(stream, packet_fmt) == packet
 ```
 
-### Derive the format from a typed class
+### Derive the format for type-safe support
 
 If class fields are annotated with `typing.Annotated[..., fmt]`, fmtspec can
 recursively derive the mapping format for you.
@@ -335,5 +337,5 @@ These reference pages cover the details by topic:
 - [docs/types-api.md](docs/types-api.md) for `fmtspec.types`
 - [docs/stream-api.md](docs/stream-api.md) for custom `Type` implementations,
   `Context`, and `fmtspec.stream`
-- [docs/lib-api.md](docs/lib-api.md) for `fmtspec.lib` — ready-made library of formats built with this framework (e.g. ASN.1 BER/DER, MessagePack)
+- [docs/lib-api.md](docs/lib-api.md) for `fmtspec.lib` — ready-made library of formats built with this framework (e.g. ASN.1, MessagePack)
 

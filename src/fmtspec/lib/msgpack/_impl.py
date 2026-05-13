@@ -5,10 +5,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from io import BytesIO
 from types import NoneType
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, Literal, Self
 
+import msgspec
+
 from fmtspec import Context, types
+from fmtspec.stream import read_exactly
 
 if TYPE_CHECKING:
     from types import EllipsisType
@@ -35,6 +39,82 @@ bin16 = types.Sized(length=types.u16, fmt=types.Bytes())
 bin32 = types.Sized(length=types.u32, fmt=types.Bytes())
 
 BYTES = {i: bytes([i]) for i in range(256)}
+_MSGSPEC_MISS = object()
+
+
+# perf: reuse the shared exact-read helper
+# then mirror each chunk into the frame copy
+def _copy_stream_nbytes(stream: BinaryIO, copy: BytesIO, size: int) -> bytes:
+    data = read_exactly(stream, size)
+    copy.write(data)
+    return data
+
+
+def _copy_stream_u16(stream: BinaryIO, copy: BytesIO) -> int:
+    data = _copy_stream_nbytes(stream, copy, 2)
+    return (data[0] << 8) | data[1]
+
+
+def _copy_stream_u32(stream: BinaryIO, copy: BytesIO) -> int:
+    data = _copy_stream_nbytes(stream, copy, 4)
+    return (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3]
+
+
+def _copy_stream_frame(stream: BinaryIO, copy: BytesIO) -> None:
+    tag = _copy_stream_nbytes(stream, copy, 1)[0]
+
+    if tag <= 0x7F or tag >= 0xE0 or tag in (0xC0, 0xC2, 0xC3):
+        pass
+    elif tag <= 0x8F:
+        for _ in range(tag & 0x0F):
+            _copy_stream_frame(stream, copy)
+            _copy_stream_frame(stream, copy)
+    elif tag <= 0x9F:
+        for _ in range(tag & 0x0F):
+            _copy_stream_frame(stream, copy)
+    elif tag <= 0xBF:
+        _copy_stream_nbytes(stream, copy, tag & 0x1F)
+    elif tag in (BIN8, STR8, 0xCC, 0xD0):
+        size = _copy_stream_nbytes(stream, copy, 1)[0]
+        _copy_stream_nbytes(stream, copy, size if tag in (BIN8, STR8) else 1)
+    elif tag in (BIN16, STR16, 0xCD, 0xD1):
+        size = _copy_stream_u16(stream, copy)
+        _copy_stream_nbytes(stream, copy, size if tag in (BIN16, STR16) else 2)
+    elif tag in (BIN32, STR32, 0xCE, 0xD2):
+        size = _copy_stream_u32(stream, copy)
+        _copy_stream_nbytes(stream, copy, size if tag in (BIN32, STR32) else 4)
+    elif tag in (0xCF, 0xD3, FLOAT64):
+        _copy_stream_nbytes(stream, copy, 8)
+    elif tag == FLOAT32:
+        _copy_stream_nbytes(stream, copy, 4)
+    elif tag == ARRAY16:
+        size = _copy_stream_u16(stream, copy)
+        for _ in range(size):
+            _copy_stream_frame(stream, copy)
+    elif tag == ARRAY32:
+        size = _copy_stream_u32(stream, copy)
+        for _ in range(size):
+            _copy_stream_frame(stream, copy)
+    elif tag == MAP16:
+        size = _copy_stream_u16(stream, copy)
+        for _ in range(size):
+            _copy_stream_frame(stream, copy)
+            _copy_stream_frame(stream, copy)
+    elif tag == MAP32:
+        size = _copy_stream_u32(stream, copy)
+        for _ in range(size):
+            _copy_stream_frame(stream, copy)
+            _copy_stream_frame(stream, copy)
+    else:
+        raise ValueError(f"Unknown msgpack tag: 0x{tag:02x}")
+
+
+# perf: build one contiguous frame buffer for msgspec
+# while leaving the source stream at the frame boundary
+def _read_stream_frame(stream: BinaryIO) -> memoryview:
+    copy = BytesIO()
+    _copy_stream_frame(stream, copy)
+    return copy.getbuffer()
 
 
 def _encode_int(value: int, stream: BinaryIO) -> None:
@@ -142,6 +222,8 @@ class MsgPack:
     _float_type: types.Float = field(init=False, repr=False, compare=False)
     _float_tag: int = field(init=False, repr=False, compare=False)
     _keysafe: Self | None = field(init=False, repr=False, compare=False)
+    _msgspec_encoder: msgspec.msgpack.Encoder = field(init=False, repr=False, compare=False)
+    _msgspec_decoder: msgspec.msgpack.Decoder = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.array_type is tuple and self.array_type is tuple:
@@ -163,8 +245,41 @@ class MsgPack:
             "_float_type",
             _FLOAT_BY_TAG[self._float_tag],
         )
+        object.__setattr__(self, "_msgspec_encoder", msgspec.msgpack.Encoder())
+        object.__setattr__(self, "_msgspec_decoder", msgspec.msgpack.Decoder())
+
+    def _decode_with_msgspec(self, stream: BinaryIO) -> Any:
+        start = stream.tell()
+        try:
+            frame_buffer = _read_stream_frame(stream)
+            result = self._msgspec_decoder.decode(frame_buffer)
+        except (EOFError, TypeError, ValueError, msgspec.DecodeError):
+            stream.seek(start)
+            return _MSGSPEC_MISS
+
+        if self.array_type is not list or self.map_type is not dict:
+            return self._postprocess_msgspec(result)
+        return result
+
+    def _postprocess_msgspec(self, value: Any) -> Any:
+        if type(value) is list:
+            return self.array_type(self._postprocess_msgspec(item) for item in value)
+        if type(value) is dict:
+            items = (
+                (self._postprocess_msgspec(key), self._postprocess_msgspec(item))
+                for key, item in value.items()
+            )
+            if self.map_type is dict:
+                return dict(items)
+            return self.map_type(items)
+        return value
 
     def encode(self, stream: BinaryIO, value: Any, *, context: Context) -> None:
+        # perf: start the non-inspect msgspec encode fast path
+        if not context.inspect and self.float_precision == 8:
+            stream.write(self._msgspec_encoder.encode(value))
+            return
+
         t = type(value)
         if t is NoneType:
             stream.write(b"\xc0")
@@ -254,6 +369,12 @@ class MsgPack:
             i += 1
 
     def decode(self, stream: BinaryIO, *, context: Context) -> Any:
+        # perf: start the non-inspect msgspec decode fast path
+        if not context.inspect:
+            result = self._decode_with_msgspec(stream)
+            if result is not _MSGSPEC_MISS:
+                return result
+
         b = stream.read(1)
         if not b:
             raise EOFError("Unexpected end of stream")

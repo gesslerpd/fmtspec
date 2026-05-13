@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+from contextlib import closing, nullcontext
+from io import BytesIO
+from tempfile import TemporaryFile
+from unittest.mock import Mock
 
 import pytest
 
@@ -11,6 +15,7 @@ from fmtspec import (
     EncodeError,
     decode,
     decode_inspect,
+    decode_stream,
     encode,
     encode_inspect,
     format_tree,
@@ -28,7 +33,70 @@ from fmtspec.lib.msgpack._impl import (
     STR8,
     STR16,
     STR32,
+    MsgPack,
 )
+
+
+def _tempfile_stream(data: bytes):
+    stream = TemporaryFile("w+b")
+    stream.write(data)
+    stream.seek(0)
+    return stream
+
+
+def _stream_context(stream_factory, data: bytes):
+    stream = stream_factory(data)
+    if stream_factory is BytesIO:
+        return nullcontext(stream)
+    return closing(stream)
+
+
+_MISSING = object()
+
+
+def _install_msgspec_encoder(
+    fmt: MsgPack,
+    *,
+    return_value: object = _MISSING,
+    side_effect: object = _MISSING,
+) -> Mock:
+    encoder = Mock()
+    if return_value is not _MISSING:
+        encoder.encode.return_value = return_value
+    if side_effect is not _MISSING:
+        encoder.encode.side_effect = side_effect
+    object.__setattr__(fmt, "_msgspec_encoder", encoder)
+    return encoder
+
+
+def _install_msgspec_decoder(
+    fmt: MsgPack,
+    *,
+    side_effect: object = _MISSING,
+) -> Mock:
+    decoder = Mock()
+    if side_effect is not _MISSING:
+        decoder.decode.side_effect = side_effect
+    object.__setattr__(fmt, "_msgspec_decoder", decoder)
+    return decoder
+
+
+def _decoder_for_payloads(payloads: dict[bytes, object]):
+    def decode_payload(buf):
+        payload = bytes(buf)
+        if payload not in payloads:
+            raise AssertionError(f"unexpected payload: {payload!r}")
+        result = payloads[payload]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    return decode_payload
+
+
+def _assert_decoder_payloads(decoder: Mock, expected: list[bytes]) -> None:
+    assert [bytes(args[0]) for args, _ in decoder.decode.call_args_list] == expected
+    decoder.reset_mock()
 
 
 class TestMsgPackNil:
@@ -706,3 +774,158 @@ class TestMsgPackEdgeCases:
         # They should decode to different types
         assert isinstance(decode(str_data, msgpack), str)
         assert isinstance(decode(bin_data, msgpack), bytes)
+
+
+class TestMsgPackFastPath:
+    def test_encode_float32_keeps_custom_path(self):
+        fmt = MsgPack(float_precision=4)
+
+        encoder = _install_msgspec_encoder(
+            fmt,
+            side_effect=AssertionError("float32 mode should not use msgspec encode"),
+        )
+
+        assert encode(1.0, fmt) == b"\xca\x3f\x80\x00\x00"
+        encoder.encode.assert_not_called()
+
+    def test_encode_uses_msgspec_without_inspect(self):
+        fmt = MsgPack()
+
+        encoder = _install_msgspec_encoder(fmt, return_value=b"\x92\x01\x02")
+
+        assert encode([1, 2], fmt) == b"\x92\x01\x02"
+        encoder.encode.assert_called_once_with([1, 2])
+
+    def test_encode_inspect_keeps_custom_path(self):
+        fmt = MsgPack()
+
+        encoder = _install_msgspec_encoder(
+            fmt,
+            side_effect=AssertionError("inspect mode should not use msgspec encode"),
+        )
+
+        data, _ = encode_inspect([1, 2], fmt)
+
+        assert data == b"\x92\x01\x02"
+        encoder.encode.assert_not_called()
+
+    def test_decode_uses_msgspec_without_inspect(self):
+        fmt = MsgPack(array_type=tuple)
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads({b"\x92\x01\x02": [1, 2]}),
+        )
+
+        assert decode(b"\x92\x01\x02", fmt) == (1, 2)
+        _assert_decoder_payloads(decoder, [b"\x92\x01\x02"])
+
+    def test_decode_uses_msgspec_with_non_default_map_type(self):
+        fmt = MsgPack(array_type=tuple, map_type=tuple)
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads({b"\x81\xa1a\x92\x01\x02": {"a": [1, 2]}}),
+        )
+
+        assert decode(b"\x81\xa1a\x92\x01\x02", fmt) == (("a", (1, 2)),)
+        _assert_decoder_payloads(decoder, [b"\x81\xa1a\x92\x01\x02"])
+
+    def test_decode_inspect_keeps_custom_path(self):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=AssertionError("inspect mode should not use msgspec decode"),
+        )
+
+        value, _ = decode_inspect(b"\x92\x01\x02", fmt)
+
+        assert value == [1, 2]
+        decoder.decode.assert_not_called()
+
+    @pytest.mark.parametrize("stream_factory", [BytesIO, _tempfile_stream])
+    def test_decode_stream_uses_msgspec_for_seekable_streams(self, stream_factory):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads({b"\x92\x01\x02": [1, 2]}),
+        )
+
+        with _stream_context(stream_factory, b"\x92\x01\x02") as stream:
+            assert decode_stream(stream, fmt=fmt) == [1, 2]
+        _assert_decoder_payloads(decoder, [b"\x92\x01\x02"])
+
+    @pytest.mark.parametrize("stream_factory", [BytesIO, _tempfile_stream])
+    def test_decode_stream_multiple_reads_preserve_position(self, stream_factory):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads(
+                {
+                    b"\x92\x01\x02": [1, 2],
+                    b"\x81\xa1a\x03": {"a": 3},
+                }
+            ),
+        )
+
+        with _stream_context(stream_factory, b"\x92\x01\x02\x81\xa1a\x03") as stream:
+            assert decode_stream(stream, fmt=fmt) == [1, 2]
+            assert decode_stream(stream, fmt=fmt) == {"a": 3}
+        _assert_decoder_payloads(
+            decoder,
+            [
+                b"\x92\x01\x02",
+                b"\x81\xa1a\x03",
+            ],
+        )
+
+    def test_decode_with_type_keeps_custom_path(self):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads({b"\x81\xa1a\x01": {"a": 1}}),
+        )
+
+        assert decode(b"\x81\xa1a\x01", fmt=fmt, type=dict) == {"a": 1}
+        _assert_decoder_payloads(decoder, [b"\x81\xa1a\x01"])
+
+    def test_decode_falls_back_when_msgspec_rejects_shape(self):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=TypeError("cannot use 'dict' as a dict key (unhashable type: 'dict')"),
+        )
+
+        assert decode(b"\x92\x01\x02", fmt) == [1, 2]
+        _assert_decoder_payloads(
+            decoder,
+            [
+                b"\x92\x01\x02",
+                b"\x01",
+                b"\x02",
+            ],
+        )
+
+    def test_decode_stream_without_getbuffer_reads_incrementally(self):
+        fmt = MsgPack()
+
+        decoder = _install_msgspec_decoder(
+            fmt,
+            side_effect=_decoder_for_payloads({b"\x92\x01\x02": [1, 2]}),
+        )
+
+        trailing = b"x" * 20000
+        stream = Mock(spec=BytesIO, wraps=BytesIO(b"\x92\x01\x02" + trailing))
+        stream.seekable.return_value = True
+
+        assert decode_stream(stream, fmt=fmt) == [1, 2]
+        _assert_decoder_payloads(decoder, [b"\x92\x01\x02"])
+        assert [len(args[0]) for args, _ in stream.readinto.call_args_list] == [1, 1, 1]
+        stream.read.assert_not_called()
+        stream.seek.assert_not_called()
+        assert stream.read() == trailing
