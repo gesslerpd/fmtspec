@@ -343,12 +343,24 @@ def test_write_all_raises_eoferror_when_initial_write_returns_none():
         write_all(cast("BinaryIO", stream), b"abc")
 
 
-def test_write_all_raises_eoferror_when_nonblocking_fileio_stalls() -> None:
-    payload = b"x" * 8192
+def test_write_all_raises_eoferror_when_fileio_stalls_after_partial_write() -> None:
+    class PartialThenStallWriter:
+        def __init__(self, writer: BinaryIO, first_write: int) -> None:
+            self._writer = writer
+            self._first_write = first_write
+            self._stalled = False
 
-    with fileio_pair(blocking=False) as (_reader, writer):
-        with pytest.raises(EOFError, match=r"Expected 8192 bytes, got 4096"):
-            write_all(writer, payload)
+        def write(self, data) -> int | None:
+            if self._stalled:
+                return None
+            self._stalled = True
+            return self._writer.write(data[: self._first_write])
+
+    with fileio_pair(blocking=True) as (_reader, writer):
+        stream = PartialThenStallWriter(writer, first_write=2)
+
+        with pytest.raises(EOFError, match=r"Expected 3 bytes, got 2"):
+            write_all(cast("BinaryIO", stream), b"abc")
 
 
 def test_write_all_raises_eoferror_when_nonblocking_socket_makefile_stalls() -> None:
