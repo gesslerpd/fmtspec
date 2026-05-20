@@ -23,7 +23,7 @@ class FrozenDict(dict):
         return hash(tuple(sorted(self.items())))
 
     # for roundtrip eq checks
-    def __eq__(self, other: object) -> bool:
+    def __eq__(self, other) -> bool:
         if isinstance(other, Mapping):
             return dict.__eq__(self, other)
         # tuples should also compare equal if they have the same items

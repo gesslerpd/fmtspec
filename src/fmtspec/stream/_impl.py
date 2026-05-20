@@ -50,20 +50,24 @@ def write_all(stream: BinaryIO, data: Buffer, /) -> None:
     if type(stream) is BytesIO:
         stream.write(data)
         return
-    total = len(data)
-    write = stream.write
-    n = write(data)
-    if n < total:
-        # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
-        mv = memoryview(data)
+
+    mv = memoryview(data)
+    try:
+        total = len(mv)
+        n = 0
+        write = stream.write
         while n < total:
+            # FUTURE: optimize by only writing part of remaining data? based on the first `n` value?
             written = write(mv[n:])
+            if not written:
+                raise EOFError(f"Expected {total} bytes, got {n}")
             n += written
+    finally:
         mv.release()  # not required but explicitly release memoryview
 
 
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def read_exactly(stream: BinaryIO, size: int, /) -> bytes:
+def read_exactly(stream: BinaryIO, size: int, /) -> bytearray | bytes:
     """Read exactly ``size`` bytes from ``stream`` or raise ``EOFError``."""
     # perf: fast path for BytesIO
     if type(stream) is BytesIO:
@@ -101,7 +105,7 @@ def read_exactly(stream: BinaryIO, size: int, /) -> bytes:
 
 
 # perf: force positional-only to avoid unnecessary kwargs parsing overhead in hot paths
-def peek(stream: BinaryIO, size: int, /) -> bytes:
+def peek(stream: BinaryIO, size: int, /) -> bytes | bytearray:
     """Peek exactly ``size`` bytes from ``stream`` without advancing the position."""
     data = read_exactly(stream, size)
     stream.seek(-size, SEEK_CUR)

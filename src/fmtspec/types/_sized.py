@@ -57,7 +57,7 @@ class Sized:
             return 0
         return (self.align - (length % self.align)) % self.align
 
-    def _check_padding(self, padding: bytes, pad_len: int) -> None:
+    def _check_padding(self, padding: bytes | bytearray, pad_len: int) -> None:
         if len(padding) != pad_len:
             raise ValueError("Invalid or missing padding bytes after sized field")
         if not self.fill:

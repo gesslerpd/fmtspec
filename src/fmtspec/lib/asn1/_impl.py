@@ -182,7 +182,7 @@ def _encode_oid(oid: str) -> bytes:
     return bytes(out)
 
 
-def _decode_oid(data: bytes) -> str:
+def _decode_oid(data: bytes | bytearray) -> str:
     if not data:
         raise ValueError("OID body must not be empty")
 
@@ -197,8 +197,8 @@ def _decode_oid(data: bytes) -> str:
     return ".".join(str(arc) for arc in arcs)
 
 
-def _decode_universal_primitive(tag: int, data: bytes) -> Any:
-    value: Any = data
+def _decode_universal_primitive(tag: int, data: bytes | bytearray) -> Any:
+    value = data
     if tag == UniversalTag.BOOLEAN:
         if len(data) != 1:
             raise ValueError("BOOLEAN must be exactly 1 byte")

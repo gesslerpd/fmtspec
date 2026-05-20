@@ -1,12 +1,71 @@
+import os
 import socket
 import threading
-from io import BytesIO
+from contextlib import contextmanager
+from io import BytesIO, FileIO
 from pathlib import Path
+from typing import BinaryIO, cast
 
 import pytest
 
 from fmtspec import decode_stream, encode_stream, types
 from fmtspec.stream import peek, read_exactly, seek_to, write_all
+
+ROUNDTRIP_FMT = {
+    "key": types.TakeUntil(types.str_, b"\0"),
+    "number": types.Int(byteorder="little", signed=False, size=4),
+}
+
+
+@contextmanager
+def fileio_pair(*, blocking: bool):
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, blocking)
+    os.set_blocking(write_fd, blocking)
+    with (
+        FileIO(read_fd, "rb", closefd=True) as reader,
+        FileIO(write_fd, "wb", closefd=True) as writer,
+    ):
+        yield reader, writer
+
+
+@contextmanager
+def socket_makefile_pair(*, blocking: bool):
+    recv_sock, send_sock = socket.socketpair()
+    recv_sock.setblocking(blocking)
+    send_sock.setblocking(blocking)
+    with recv_sock, send_sock:
+        with (
+            recv_sock.makefile(
+                "rb",
+            ) as reader,
+            send_sock.makefile("wb") as writer,
+        ):
+            yield reader, writer
+
+
+@contextmanager
+def raw_socket_makefile_pair(*, blocking: bool):
+    recv_sock, send_sock = socket.socketpair()
+    recv_sock.setblocking(blocking)
+    send_sock.setblocking(blocking)
+    with recv_sock, send_sock:
+        with (
+            recv_sock.makefile("rb", buffering=0) as reader,
+            send_sock.makefile("wb", buffering=0) as writer,
+        ):
+            yield reader, writer
+
+
+STREAM_FACTORIES = [
+    pytest.param(fileio_pair, id="fileio"),
+    pytest.param(socket_makefile_pair, id="socket.makefile"),
+]
+
+HELPER_STREAM_FACTORIES = [
+    pytest.param(fileio_pair, id="fileio"),
+    pytest.param(raw_socket_makefile_pair, id="socket.makefile(raw)"),
+]
 
 
 def test_roundtrip():
@@ -86,10 +145,6 @@ def test_file_roundtrip(tmp_path: Path):
 
 
 def test_socket_roundtrip_with_encode_decode_stream():
-    fmt = {
-        "key": types.TakeUntil(types.str_, b"\0"),
-        "number": types.Int(byteorder="little", signed=False, size=4),
-    }
     result = {}
 
     def sender(sock, n) -> None:
@@ -97,14 +152,14 @@ def test_socket_roundtrip_with_encode_decode_stream():
             with sock.makefile("wb") as stream:
                 for i in range(n):
                     obj = {"key": f"value_{i}", "number": i}
-                    encode_stream(stream, obj, fmt)
+                    encode_stream(stream, obj, ROUNDTRIP_FMT)
                     stream.flush()
 
     def receiver(sock, n) -> None:
         with sock:
             with sock.makefile("rb") as recv_stream:
                 for _ in range(n):
-                    result.update(decode_stream(recv_stream, fmt))
+                    result.update(decode_stream(recv_stream, ROUNDTRIP_FMT))
 
     n = 10000
     sock_send, sock_recv = socket.socketpair()
@@ -118,6 +173,34 @@ def test_socket_roundtrip_with_encode_decode_stream():
     recv_thread.join()
 
     assert result == {"key": f"value_{n - 1}", "number": n - 1}
+
+
+@pytest.mark.parametrize("factory", STREAM_FACTORIES)
+@pytest.mark.parametrize("blocking", [True, False], ids=["blocking", "non-blocking"])
+def test_read_exactly_with_python_binary_streams(factory, blocking: bool) -> None:
+    payload = b"value\0\x2a\x00\x00\x00"
+
+    with factory(blocking=blocking) as (reader, writer):
+        writer.write(payload)
+        flush = getattr(writer, "flush", None)
+        if flush is not None:
+            flush()
+
+        assert read_exactly(reader, len(payload)) == bytearray(payload)
+
+
+@pytest.mark.parametrize("factory", STREAM_FACTORIES)
+@pytest.mark.parametrize("blocking", [True, False], ids=["blocking", "non-blocking"])
+def test_encode_decode_stream_with_python_binary_streams(factory, blocking: bool) -> None:
+    obj = {"key": "value", "number": 42}
+
+    with factory(blocking=blocking) as (reader, writer):
+        encode_stream(writer, obj, ROUNDTRIP_FMT)
+        flush = getattr(writer, "flush", None)
+        if flush is not None:
+            flush()
+
+        assert decode_stream(reader, ROUNDTRIP_FMT) == obj
 
 
 def test_read_exactly_bytesio_success():
@@ -146,7 +229,7 @@ def test_read_exactly_readinto_success():
 
     stream = ReadIntoStream(b"xyz123")
 
-    assert read_exactly(stream, 6) == bytearray(b"xyz123")
+    assert read_exactly(cast("BinaryIO", stream), 6) == bytearray(b"xyz123")
 
 
 def test_read_exactly_read_fallback_success():
@@ -167,7 +250,24 @@ def test_read_exactly_read_fallback_success():
 
     stream = ReadOnlyStream(b"hello")
 
-    assert read_exactly(stream, 5) == bytearray(b"hello")
+    assert read_exactly(cast("BinaryIO", stream), 5) == bytearray(b"hello")
+
+
+@pytest.mark.parametrize("factory", HELPER_STREAM_FACTORIES)
+@pytest.mark.parametrize("blocking", [True, False], ids=["blocking", "non-blocking"])
+def test_read_exactly_raises_eoferror_when_real_stream_ends_early(factory, blocking: bool) -> None:
+    with factory(blocking=blocking) as (reader, writer):
+        writer.write(b"abc")
+        flush = getattr(writer, "flush", None)
+        if flush is not None:
+            flush()
+        sock = getattr(writer, "_sock", None)
+        if sock is not None:
+            sock.shutdown(socket.SHUT_WR)
+        writer.close()
+
+        with pytest.raises(EOFError, match=r"Expected 5 bytes, got 3"):
+            read_exactly(reader, 5)
 
 
 def test_read_exactly_raises_eoferror_when_short():
@@ -227,20 +327,39 @@ def test_write_all_writes_partial_stream_until_complete():
     stream = PartialWriteStream()
     payload = b"abcd"
 
-    write_all(stream, payload)
+    write_all(cast("BinaryIO", stream), payload)
 
     assert b"".join(stream.writes) == payload
 
 
-def test_write_all_raises_when_initial_write_returns_none():
+def test_write_all_raises_eoferror_when_initial_write_returns_none():
     class NoneWriteStream:
         def write(self, _data):
             return None
 
     stream = NoneWriteStream()
 
-    with pytest.raises(TypeError):
-        write_all(stream, b"abc")
+    with pytest.raises(EOFError, match=r"Expected 3 bytes, got 0"):
+        write_all(cast("BinaryIO", stream), b"abc")
+
+
+def test_write_all_raises_eoferror_when_nonblocking_fileio_stalls() -> None:
+    payload = b"x" * 8192
+
+    with fileio_pair(blocking=False) as (_reader, writer):
+        with pytest.raises(EOFError, match=r"Expected 8192 bytes, got 4096"):
+            write_all(writer, payload)
+
+
+def test_write_all_raises_eoferror_when_nonblocking_socket_makefile_stalls() -> None:
+    chunk = b"x" * 65536
+
+    with raw_socket_makefile_pair(blocking=False) as (_reader, writer):
+        while writer.write(chunk) is not None:
+            pass
+
+        with pytest.raises(EOFError, match=r"Expected 3 bytes, got 0"):
+            write_all(cast("BinaryIO", writer), b"abc")
 
 
 def test_read_exactly_zero_bytes_returns_empty_and_keeps_position():
@@ -270,7 +389,7 @@ def test_read_exactly_readinto_raises_eoferror_when_short():
     stream = ShortReadIntoStream(b"abc")
 
     with pytest.raises(EOFError, match=r"Expected 5 bytes, got 3"):
-        read_exactly(stream, 5)
+        read_exactly(cast("BinaryIO", stream), 5)
 
 
 def test_read_exactly_read_fallback_raises_eoferror_when_short():
@@ -292,7 +411,7 @@ def test_read_exactly_read_fallback_raises_eoferror_when_short():
     stream = ShortReadOnlyStream(b"xy")
 
     with pytest.raises(EOFError, match=r"Expected 4 bytes, got 2"):
-        read_exactly(stream, 4)
+        read_exactly(cast("BinaryIO", stream), 4)
 
 
 def test_write_all_accepts_memoryview_input():
@@ -311,6 +430,6 @@ def test_write_all_accepts_memoryview_input():
     stream = CapturingStream()
     payload = memoryview(b"abcdef")
 
-    write_all(stream, payload)
+    write_all(cast("BinaryIO", stream), payload)
 
     assert b"".join(stream.writes) == b"abcdef"
