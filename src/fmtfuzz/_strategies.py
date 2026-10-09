@@ -282,10 +282,6 @@ def _is_bounded_nonnegative_int(value: Any, *, upper_bound: int) -> bool:
     return isinstance(value, int) and 0 <= value <= upper_bound
 
 
-def _is_count(value: Any, *, maximum: int) -> bool:
-    return _is_bounded_nonnegative_int(value, upper_bound=maximum)
-
-
 def _mapping_field_strategy(  # noqa: PLR0911, PLR0912, PLR0913
     fmt: Any,
     contexts: FormatContext,
@@ -397,10 +393,10 @@ def _count_strategy(
     if isinstance(count_fmt, Int):
         return _int_strategy(count_fmt, low=0, high=max_size)
     strategy = _value_strategy(count_fmt, contexts, max_size, frozenset())
-    return strategy.filter(partial(_is_count, maximum=max_size))
+    return strategy.filter(partial(_is_bounded_nonnegative_int, upper_bound=max_size))
 
 
-def _sized_strategy(  # noqa: PLR0912, PLR0913, PLR0917
+def _sized_strategy(  # noqa: PLR0912, PLR0913
     fmt: Sized,
     contexts: FormatContext,
     max_size: int,
@@ -520,7 +516,7 @@ def _fixed_list_strategy(
     return st.tuples(prefix, last_strategy).map(_append_list_tail)
 
 
-def _array_values_strategy(  # noqa: PLR0913, PLR0917
+def _array_values_strategy(  # noqa: PLR0913
     fmt: Array,
     contexts: FormatContext,
     max_size: int,
@@ -571,7 +567,7 @@ def _array_values_strategy(  # noqa: PLR0913, PLR0917
 
 
 @st.composite
-def _array_strategy_value(  # noqa: PLR0913, PLR0917
+def _array_strategy_value(  # noqa: PLR0913
     draw: Callable[[SearchStrategy[Any]], Any],
     fmt: Array,
     contexts: FormatContext,
@@ -651,7 +647,7 @@ def _array_strategy(  # noqa: PLR0913
     )
 
 
-def _tagged_union_branch_strategy(  # noqa: PLR0913, PLR0917
+def _tagged_union_branch_strategy(  # noqa: PLR0913
     tag: Any,
     fmt: TaggedUnion,
     contexts: FormatContext,
@@ -748,14 +744,6 @@ def _valid_take_until_value(
     return fmt.terminator not in encoded and (fmt.max_size is None or len(encoded) <= fmt.max_size)
 
 
-def _encode_value(value: Any, *, fmt: Any) -> bytes:
-    return encode(value, fmt)
-
-
-def _within_size(data: bytes, *, maximum: int) -> bool:
-    return len(data) <= maximum
-
-
 def _generated_dependency(
     dependency: FormatPath,
     *,
@@ -782,7 +770,7 @@ def _generated_dependency(
 
 
 @st.composite
-def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
+def _mapping_value_strategy(  # noqa: PLR0913
     draw: Callable[[SearchStrategy[Any]], Any],
     fmt: Mapping[str, Any],
     contexts: FormatContext,
@@ -1074,5 +1062,6 @@ def binary_strategy(
     """Build a strategy for valid encoded bytes accepted by ``fmt``."""
     plan = compile_format(fmt)
     values = format_strategy(plan, max_size=max_size)
-    strategy = values.map(partial(_encode_value, fmt=plan.fmt))
-    return strategy.filter(partial(_within_size, maximum=max_size))
+    return values.map(lambda value: encode(value, plan.fmt)).filter(
+        lambda data: len(data) <= max_size
+    )

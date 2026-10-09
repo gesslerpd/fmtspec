@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from fmtspec import decode, encode
@@ -80,10 +79,6 @@ def replay_decision_seed(
     return seed.replay(max_size=max_size)
 
 
-def _decision_seed_from_value(value: Any, *, plan: FormatPlan) -> DecisionSeed:
-    return DecisionSeed(plan, deepcopy(value))
-
-
 def decision_seed_strategy(
     fmt: Any,
     *,
@@ -92,4 +87,4 @@ def decision_seed_strategy(
     """Generate replayable structured decisions for a format."""
     plan = compile_format(fmt)
     strategy: SearchStrategy[Any] = format_strategy(plan, max_size=max_size)
-    return strategy.map(partial(_decision_seed_from_value, plan=plan))
+    return strategy.map(lambda value: DecisionSeed(plan, deepcopy(value)))

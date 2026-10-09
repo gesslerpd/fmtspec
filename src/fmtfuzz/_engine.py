@@ -29,42 +29,14 @@ type FuzzTarget = Callable[[bytes], Any]
 type Feedback = Callable[[bytes], Hashable | None]
 
 
-def _mutate_valid_with_seed(
-    data: bytes,
-    seed: int,
-    *,
-    fmt: Any,
-    max_size: int,
-) -> bytes:
-    return mutate_valid(data, fmt, seed=seed, max_size=max_size)
-
-
-def _mutate_malformed_with_seed(
-    data: bytes,
-    seed: int,
-    *,
-    fmt: Any,
-    max_size: int,
-) -> bytes:
-    return mutate_malformed(data, fmt, seed=seed, max_size=max_size)
-
-
-def _valid_mutations(
+def _mutation_strategy(
     data: bytes,
     *,
     fmt: Any,
     max_size: int,
+    mutate: Callable[..., bytes],
 ) -> SearchStrategy[bytes]:
-    return st.integers().map(partial(_mutate_valid_with_seed, data, fmt=fmt, max_size=max_size))
-
-
-def _malformed_mutations(
-    data: bytes,
-    *,
-    fmt: Any,
-    max_size: int,
-) -> SearchStrategy[bytes]:
-    return st.integers().map(partial(_mutate_malformed_with_seed, data, fmt=fmt, max_size=max_size))
+    return st.integers().map(lambda seed: mutate(data, fmt, seed=seed, max_size=max_size))
 
 
 @dataclass(slots=True, repr=False)
@@ -146,8 +118,12 @@ def fuzz_strategy(
         if stored:
             base = st.one_of(valid, st.sampled_from(stored))
 
-    valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=plan, max_size=max_size))
-    malformed_mutations = base.flatmap(partial(_malformed_mutations, fmt=plan, max_size=max_size))
+    valid_mutations = valid.flatmap(
+        partial(_mutation_strategy, fmt=plan, max_size=max_size, mutate=mutate_valid)
+    )
+    malformed_mutations = base.flatmap(
+        partial(_mutation_strategy, fmt=plan, max_size=max_size, mutate=mutate_malformed)
+    )
     return st.one_of(base, valid_mutations, malformed_mutations)
 
 

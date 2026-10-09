@@ -172,7 +172,10 @@ class FormatPlan:
     field_ranges: Mapping[FormatPath, FieldRange] = field(default_factory=dict)
     enum_policies: Mapping[FormatPath, EnumPolicy] = field(default_factory=dict)
     field_derivations: Mapping[FormatPath, FieldDerivation] = field(default_factory=dict)
-    _indexes: _PlanIndexes = field(repr=False, compare=False, kw_only=True)
+    _indexes: _PlanIndexes = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_indexes", _plan_indexes(self.root, self.dependencies))
 
     @property
     def fmt(self) -> Any:
@@ -343,6 +346,21 @@ def _valid_hint(fmt: Any, value: Any) -> bool:  # noqa: PLR0911
             return False
 
 
+def _field_node(
+    field_nodes: Mapping[FormatPath, FormatPlanNode],
+    path: FormatPath,
+    option: str,
+) -> FormatPlanNode:
+    if not isinstance(path, tuple):
+        raise TypeError(f"{option} paths must be tuples")
+    try:
+        return field_nodes[path]
+    except KeyError as exc:
+        raise FormatPlanError(
+            f"{option.capitalize()} path {path!r} does not identify a field"
+        ) from exc
+
+
 def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     fmt: Any,
     *,
@@ -378,14 +396,7 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     normalized_hints: dict[FormatPath, FieldHint] = {}
     if field_hints is not None:
         for path, hint in field_hints.items():
-            if not isinstance(path, tuple):
-                raise TypeError("field hint paths must be tuples")
-            try:
-                node = field_nodes[path]
-            except KeyError as exc:
-                raise FormatPlanError(
-                    f"Field hint path {path!r} does not identify a field"
-                ) from exc
+            node = _field_node(field_nodes, path, "field hint")
             if not isinstance(hint, FieldHint):
                 raise TypeError(f"Field hint at {path!r} must be a FieldHint")
             invalid = [value for value in hint.values if not _valid_hint(node.fmt, value)]
@@ -399,14 +410,7 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     normalized_ranges: dict[FormatPath, FieldRange] = {}
     if field_ranges is not None:
         for path, field_range in field_ranges.items():
-            if not isinstance(path, tuple):
-                raise TypeError("field range paths must be tuples")
-            try:
-                node = field_nodes[path]
-            except KeyError as exc:
-                raise FormatPlanError(
-                    f"Field range path {path!r} does not identify a field"
-                ) from exc
+            node = _field_node(field_nodes, path, "field range")
             if not isinstance(field_range, FieldRange):
                 raise TypeError(f"Field range at {path!r} must be a FieldRange")
             if isinstance(node.fmt, Int):
@@ -428,14 +432,7 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     normalized_enum_policies: dict[FormatPath, EnumPolicy] = {}
     if enum_policies is not None:
         for path, policy in enum_policies.items():
-            if not isinstance(path, tuple):
-                raise TypeError("enum policy paths must be tuples")
-            try:
-                node = field_nodes[path]
-            except KeyError as exc:
-                raise FormatPlanError(
-                    f"Enum policy path {path!r} does not identify a field"
-                ) from exc
+            node = _field_node(field_nodes, path, "enum policy")
             if not isinstance(node.fmt, Int) or node.fmt.enum is None:
                 raise FormatPlanError(
                     f"Enum policy at {path!r} requires an Int field with a declared enum"
@@ -492,7 +489,6 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
         raise FormatPlanError(f"Field {conflict!r} cannot have both a hint and a derivation")
 
     compiled_dependencies = tuple(dependencies)
-    indexes = _plan_indexes(root, compiled_dependencies)
     return FormatPlan(
         root=root,
         dependencies=compiled_dependencies,
@@ -500,5 +496,4 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
         field_ranges=MappingProxyType(normalized_ranges),
         enum_policies=MappingProxyType(normalized_enum_policies),
         field_derivations=MappingProxyType(normalized_derivations),
-        _indexes=indexes,
     )

@@ -521,6 +521,8 @@ def test_compiled_plan_tracks_dependencies_and_field_hints():
     assert plan.dependencies[0].relation == "dimension"
     assert plan.field_hints[("count",)] == FieldHint((2, 3), weight=3)
     assert compile_format(plan) is plan
+    constructed_plan = FormatPlan(root=plan.root, dependencies=plan.dependencies)
+    assert constructed_plan.dependency_for(("items",), "dimension") == plan.dependencies[0]
     switch_plan = compile_format(
         {
             "kind": types.u8,
