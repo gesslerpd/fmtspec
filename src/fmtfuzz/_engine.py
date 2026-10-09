@@ -14,7 +14,14 @@ from hypothesis import strategies as st
 from fmtspec import DecodeError, ExcessDecodeError
 
 from ._mutations import mutate_malformed, mutate_valid
-from ._plan import FieldHint, FormatPath, compile_format
+from ._plan import (
+    EnumPolicy,
+    FieldDerivation,
+    FieldHint,
+    FieldRange,
+    FormatPath,
+    compile_format,
+)
 from ._strategies import binary_strategy
 
 if TYPE_CHECKING:
@@ -94,15 +101,24 @@ class FuzzResult:
     corpus_entries: int
 
 
-def fuzz_strategy(
+def fuzz_strategy(  # noqa: PLR0913
     fmt: Any,
     *,
     max_size: int = 4096,
     corpus: Corpus | None = None,
     field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
+    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
+    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[bytes]:
     """Combine valid encodings, valid mutations, and malformed mutations."""
-    plan = compile_format(fmt, field_hints=field_hints)
+    plan = compile_format(
+        fmt,
+        field_hints=field_hints,
+        field_ranges=field_ranges,
+        enum_policies=enum_policies,
+        field_derivations=field_derivations,
+    )
     fmt = plan
     valid = binary_strategy(plan, max_size=max_size)
     sources: list[SearchStrategy[bytes]] = [valid]
@@ -128,6 +144,9 @@ def message_sequence_strategy(  # noqa: PLR0913
     max_message_size: int = 4096,
     corpus: Corpus | None = None,
     field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
+    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
+    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[tuple[bytes, ...]]:
     """Generate a bounded sequence of independently fuzzed binary messages.
 
@@ -149,6 +168,9 @@ def message_sequence_strategy(  # noqa: PLR0913
         max_size=max_message_size,
         corpus=corpus,
         field_hints=field_hints,
+        field_ranges=field_ranges,
+        enum_policies=enum_policies,
+        field_derivations=field_derivations,
     )
     return st.lists(
         messages,
@@ -178,6 +200,9 @@ class Fuzzer:
         ),
         feedback: Feedback | None = None,
         field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+        field_ranges: Mapping[FormatPath, FieldRange] | None = None,
+        enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
+        field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
     ) -> None:
         if not callable(target):
             raise TypeError("target must be callable")
@@ -186,7 +211,13 @@ class Fuzzer:
             for exc in expected_exceptions
         ):
             raise TypeError("expected_exceptions must contain Exception subclasses")
-        self.plan = compile_format(fmt, field_hints=field_hints)
+        self.plan = compile_format(
+            fmt,
+            field_hints=field_hints,
+            field_ranges=field_ranges,
+            enum_policies=enum_policies,
+            field_derivations=field_derivations,
+        )
         self.fmt = self.plan.fmt
         self.target = target
         self.corpus = corpus

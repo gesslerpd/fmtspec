@@ -133,11 +133,13 @@ dataclass or `msgspec.Struct`.
 The [`fmtfuzz` package](docs/fmtfuzz.md) derives Hypothesis strategies from an
 `fmtspec` format, then combines valid samples with inspection-guided mutations.
 Its reusable format plans support reference-aware array, optional, and branch
-mutations, field-value hints, and replayable decision seeds. Use its `Fuzzer`
-API for a bounded campaign, or compose `fuzz_strategy(...)` with a Hypothesis
-test (or `message_sequence_strategy(...)` for bounded batches) and run that
-test with HypoFuzz for coverage-guided exploration. Protocol-specific
-multi-message state can be modeled with Hypothesis state machines; see the
+mutations, field-value hints, bounded integer/bitfield ranges, weighted
+known-and-unknown enum generation, pure derived fields, and replayable decision
+seeds. Use its `Fuzzer` API for a bounded campaign, or compose
+`fuzz_strategy(...)` with a Hypothesis test (or
+`message_sequence_strategy(...)` for bounded batches) and run that test with
+HypoFuzz for coverage-guided exploration. Protocol-specific multi-message
+state can be modeled with Hypothesis state machines; see the
 [fmtfuzz guide](docs/fmtfuzz.md) for `event()` and `target()` feedback examples.
 
 ### Inspect Layouts While Debugging

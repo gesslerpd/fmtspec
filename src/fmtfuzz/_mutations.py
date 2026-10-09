@@ -37,22 +37,83 @@ from fmtspec.types import (
     TakeUntil,
 )
 
-from ._plan import FormatPlan, FormatPlanNode, compile_format
+from ._plan import (
+    EnumPolicy,
+    FieldDerivation,
+    FieldHint,
+    FieldRange,
+    FormatPath,
+    FormatPlan,
+    FormatPlanNode,
+    compile_format,
+)
 
 _NO_CHANGE = object()
 
 
-def _replacement(fmt: Any, value: Any, rng: random.Random) -> Any:  # noqa: PLR0911, PLR0912
+def _replacement(  # noqa: PLR0911, PLR0912, PLR0915
+    fmt: Any,
+    value: Any,
+    rng: random.Random,
+    *,
+    field_range: FieldRange | None = None,
+    enum_policy: EnumPolicy = EnumPolicy(),
+) -> Any:
     if isinstance(fmt, Int):
         bits = fmt.size * 8
         minimum = -(1 << (bits - 1)) if fmt.signed else 0
         maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
+        if field_range is not None:
+            minimum = max(
+                minimum,
+                field_range.min_value if field_range.min_value is not None else minimum,
+            )
+            maximum = min(
+                maximum,
+                field_range.max_value if field_range.max_value is not None else maximum,
+            )
         candidates = [minimum, maximum, 0, 1, -1]
         if fmt.enum is not None:
-            candidates.extend(fmt.enum)
+            members = {int(member) for member in fmt.enum}
+            if enum_policy.known_weight:
+                candidates.extend(
+                    member
+                    for member in fmt.enum
+                    if minimum <= int(member) <= maximum
+                    for _ in range(enum_policy.known_weight)
+                )
+            if enum_policy.unknown_weight:
+                unknowns = sorted(
+                    candidate
+                    for candidate in candidates
+                    if minimum <= candidate <= maximum and candidate not in members
+                )
+                candidates.extend(
+                    candidate for candidate in unknowns for _ in range(enum_policy.unknown_weight)
+                )
+                candidate = minimum
+                for member in sorted(members):
+                    if member > candidate:
+                        break
+                    if member == candidate:
+                        candidate += 1
+                if candidate <= maximum:
+                    candidates.extend(candidate for _ in range(enum_policy.unknown_weight))
         if isinstance(value, int):
             candidates.append(value ^ 1)
+            candidates.extend((value + 1, value - 1))
         candidates = [candidate for candidate in candidates if minimum <= int(candidate) <= maximum]
+        if fmt.enum is not None:
+            members = {int(member) for member in fmt.enum}
+            candidates = [
+                candidate
+                for candidate in candidates
+                if (
+                    enum_policy.known_weight
+                    if int(candidate) in members
+                    else enum_policy.unknown_weight
+                )
+            ]
         alternatives = [candidate for candidate in candidates if candidate != value]
         if alternatives:
             return rng.choice(alternatives)
@@ -62,9 +123,20 @@ def _replacement(fmt: Any, value: Any, rng: random.Random) -> Any:  # noqa: PLR0
 
     if isinstance(fmt, Bitfield):
         maximum = fmt.mask
-        alternatives = [
-            candidate for candidate in (0, maximum, 1, value ^ 1) if candidate <= maximum
-        ]
+        minimum = 0
+        if field_range is not None:
+            minimum = max(
+                minimum,
+                field_range.min_value if field_range.min_value is not None else minimum,
+            )
+            maximum = min(
+                maximum,
+                field_range.max_value if field_range.max_value is not None else maximum,
+            )
+        candidates = [minimum, maximum, 1, value ^ 1]
+        candidates.extend(1 << bit for bit in range(fmt.bits))
+        candidates.extend(maximum ^ (1 << bit) for bit in range(fmt.bits))
+        alternatives = [candidate for candidate in candidates if minimum <= candidate <= maximum]
         alternatives = [candidate for candidate in alternatives if candidate != value]
         return rng.choice(alternatives) if alternatives else _NO_CHANGE
 
@@ -111,16 +183,29 @@ def _walk_mutable(
     node: InspectNode,
     path: tuple[str | int, ...],
     rng: random.Random,
+    plan: FormatPlan,
 ) -> Iterator[tuple[tuple[str | int, ...], Any, Any]]:
-    replacement = _replacement(node.fmt, node.value, rng)
+    replacement = _replacement(
+        node.fmt,
+        node.value,
+        rng,
+        field_range=plan.range_for(path),
+        enum_policy=plan.enum_policy_for(path),
+    )
     if replacement is not _NO_CHANGE:
         yield path, node.value, replacement
     if isinstance(node.fmt, Bitfields) and isinstance(node.value, Mapping):
         for key, child_fmt in node.fmt.fmt.items():
             original = node.value[key]
-            child_replacement = _replacement(child_fmt, original, rng)
+            child_path = (*path[:-1], key) if node.fmt.inline else (*path, key)
+            child_replacement = _replacement(
+                child_fmt,
+                original,
+                rng,
+                field_range=plan.range_for(child_path),
+                enum_policy=plan.enum_policy_for(child_path),
+            )
             if child_replacement is not _NO_CHANGE:
-                child_path = (*path[:-1], key) if node.fmt.inline else (*path, key)
                 yield child_path, original, child_replacement
     for child in node.children:
         if child.key is None:
@@ -129,7 +214,7 @@ def _walk_mutable(
             child_path = (*path[:-1], child.key)
         else:
             child_path = (*path, child.key)
-        yield from _walk_mutable(child, child_path, rng)
+        yield from _walk_mutable(child, child_path, rng, plan)
 
 
 def _walk_inspection(node: InspectNode) -> Iterator[InspectNode]:
@@ -328,6 +413,49 @@ def _updated_value(
     return result
 
 
+def _values_at(value: Any, path: tuple[str | int, ...]) -> Iterator[Any]:
+    if not path:
+        yield value
+        return
+    key, *remaining = path
+    if key == "*" and isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _values_at(item, tuple(remaining))
+    elif isinstance(value, Mapping):
+        if key in value:
+            yield from _values_at(value[key], tuple(remaining))
+    elif isinstance(value, Struct):
+        if isinstance(key, str) and hasattr(value, key):
+            yield from _values_at(getattr(value, key), tuple(remaining))
+    elif isinstance(value, (list, tuple)) and isinstance(key, int):
+        if 0 <= key < len(value):
+            yield from _values_at(value[key], tuple(remaining))
+
+
+def _within_plan_ranges(value: Any, plan: FormatPlan) -> bool:
+    return all(
+        all(field_range.contains(item) for item in _values_at(value, path))
+        for path, field_range in plan.field_ranges
+    )
+
+
+def _recompute_derived(value: Any, plan: FormatPlan) -> Any:
+    for path, derivation in plan.field_derivations:
+        dependency_values = {
+            dependency: _get_at(value, dependency) for dependency in derivation.dependencies
+        }
+        if any(item is _NO_CHANGE for item in dependency_values.values()):
+            raise ValueError(f"Cannot resolve dependencies for derived field {path!r}")
+        derived = derivation.apply(dependency_values)
+        field_range = plan.range_for(path)
+        if field_range is not None and not field_range.contains(derived):
+            raise ValueError(
+                f"Derived value {derived!r} is outside the configured range at {path!r}"
+            )
+        value = _replace_at(value, path, derived)
+    return value
+
+
 def _array_candidates(
     value: Any,
     node: FormatPlanNode,
@@ -464,12 +592,16 @@ def _structural_candidates(
             yield from _branch_candidates(value, node, fmt, plan, rng)
 
 
-def mutate_valid(  # noqa: PLR0912
+def mutate_valid(  # noqa: PLR0912, PLR0913
     data: bytes,
     fmt: Any,
     *,
     seed: int | None = None,
     max_size: int = 4096,
+    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
+    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
+    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> bytes:
     """Mutate a scalar or format structure while preserving validity.
 
@@ -481,12 +613,21 @@ def mutate_valid(  # noqa: PLR0912
     if len(data) > max_size:
         raise ValueError(f"Input size {len(data)} exceeds max_size={max_size}")
 
-    plan = compile_format(fmt)
+    plan = compile_format(
+        fmt,
+        field_hints=field_hints,
+        field_ranges=field_ranges,
+        enum_policies=enum_policies,
+        field_derivations=field_derivations,
+    )
     fmt = plan.fmt
     value, tree = decode_inspect(data, fmt)
     rng = random.Random(seed)
     candidates: list[tuple[Any, bool]] = []
-    for path, original, replacement in _walk_mutable(tree, (), rng):
+    derived_paths = {path for path, _ in plan.field_derivations}
+    for path, original, replacement in _walk_mutable(tree, (), rng, plan):
+        if path in derived_paths:
+            continue
         if _get_at(value, path) != original:
             continue
         try:
@@ -510,7 +651,10 @@ def mutate_valid(  # noqa: PLR0912
         return data
 
     rng.shuffle(candidates)
-    for mutated_value, same_size in candidates:
+    for candidate_value, same_size in candidates:
+        mutated_value = _recompute_derived(candidate_value, plan)
+        if not _within_plan_ranges(mutated_value, plan):
+            continue
         try:
             mutated = encode(mutated_value, fmt)
             if (
@@ -523,6 +667,8 @@ def mutate_valid(  # noqa: PLR0912
             if not same_size and to_builtins(decoded) != to_builtins(mutated_value):
                 continue
         except (Error, IndexError, KeyError, TypeError):
+            if plan.field_derivations:
+                raise
             continue
         return mutated
     return data

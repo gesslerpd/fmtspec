@@ -157,9 +157,10 @@ format tree, field paths, sizes, available enum/branch choices, and discovered
 formats remain accepted as convenience inputs. A plan describes the format as
 it existed at compilation, so do not mutate the source format afterward.
 
-`FieldHint` supplies known values for a scalar field, such as protocol magic
-values or uncommon branch selectors. Values are sampled alongside ordinary
-strategy values, with `weight` controlling their relative frequency:
+`FieldHint` supplies preferred values for a scalar field, such as protocol
+magic values, uncommon branch selectors, or a specific unknown enum value.
+Values are sampled alongside ordinary strategy values, with `weight`
+controlling their relative frequency:
 
 ```python
 from fmtfuzz import FieldHint, compile_format, binary_strategy
@@ -172,6 +173,93 @@ plan = compile_format(
 )
 packet_bytes = binary_strategy(plan, max_size=1024)
 ```
+
+`FieldRange` applies inclusive hard bounds to an integer or bitfield field.
+The range must fit the field's encoded domain and intersects other generation
+constraints such as references and field hints. Valid mutations respect these
+ranges too; they do not change what the underlying `fmtspec` decoder accepts.
+
+`Int` formats with a declared enum generate both named members and unnamed,
+representable integer values by default. These unknown values are valid
+encodings, but they have no declared enum meaning: a normal `IntEnum` decode
+returns the raw integer for an unknown value. `IntFlag` may return an unnamed
+flag combination. Use `EnumPolicy` to change the relative weights or disable
+either category for a specific field. The complement strategy respects the
+integer width and any `FieldRange` without building a list of every possible
+integer or relying on high-rejection filtering. `FieldHint` can explicitly
+emphasize a representable unknown value.
+
+```python
+from enum import IntEnum
+
+from fmtfuzz import EnumPolicy, FieldHint, FieldRange, compile_format
+from fmtspec import types
+
+
+class Kind(IntEnum):
+    PING = 1
+    PONG = 2
+
+
+packet_fmt = {
+    "kind": types.Int(size=1, byteorder="big", signed=False, enum=Kind),
+    "length": types.u8,
+    "checksum": types.u8,
+}
+
+plan = compile_format(
+    packet_fmt,
+    field_ranges={("length",): FieldRange(min_value=1, max_value=32)},
+    enum_policies={("kind",): EnumPolicy(known_weight=1, unknown_weight=3)},
+    field_hints={("kind",): FieldHint((0xA5,), weight=2)},
+)
+```
+
+The default enum policy gives known and unknown values equal weight.
+`known_weight=0` selects only unknown values; `unknown_weight=0` preserves
+declared-only sampling. The configured weights are bounded from 0 through 32,
+and at least one category must remain enabled. If a range contains no unknown
+values, that category contributes no examples within the range.
+
+Ordinary `Bitfield` strategies also bias generation toward width-aware
+patterns: zero, all ones, walking one/zero, and alternating bits. These are
+combined with ordinary range sampling, deduplicated, and clipped by a
+configured `FieldRange`.
+
+Use `FieldDerivation` for a value determined by fields that precede it. The
+callback receives a read-only mapping of the exact declared dependency paths;
+callbacks should be pure and deterministic. Unknown, forward, and repeated
+array-element paths are rejected during plan compilation. Callback failures
+remain visible. `mutate_valid()` recomputes derived values after structured
+changes and does not mutate a derived field independently; malformed mutations
+can still break the relationship intentionally.
+
+```python
+from fmtfuzz import FieldDerivation, compile_format
+from fmtspec import types
+
+
+def copy_count(values):
+    return values[("count",)]
+
+
+length_fmt = {"count": types.u8, "count_copy": types.u8}
+plan = compile_format(
+    length_fmt,
+    field_derivations={
+        ("count_copy",): FieldDerivation(
+            dependencies=(("count",),),
+            derive=copy_count,
+        ),
+    },
+)
+```
+
+`format_strategy()`, `binary_strategy()`, `fuzz_strategy()`,
+`message_sequence_strategy()`, `Fuzzer`, and `mutate_valid()` accept or retain
+compiled plans containing these policies. Unknown enum values are
+wire-valid-only inputs; target-specific semantic validation remains the
+responsibility of the parser or protocol implementation under test.
 
 `capture_decision_seed(data, fmt)` decodes a canonical input and stores its
 structured value. `replay_decision_seed(seed)` re-encodes it; the seed can also

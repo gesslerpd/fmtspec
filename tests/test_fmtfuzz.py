@@ -1,4 +1,5 @@
 import hashlib
+from enum import IntEnum
 from typing import Annotated
 
 import msgspec
@@ -10,11 +11,15 @@ from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 from fmtfuzz import (
     Corpus,
     DecisionSeed,
+    EnumPolicy,
+    FieldDerivation,
     FieldHint,
+    FieldRange,
     FormatChild,
     FormatMetadata,
     FormatNode,
     FormatPlan,
+    FormatPlanError,
     FuzzConfig,
     Fuzzer,
     binary_strategy,
@@ -23,6 +28,7 @@ from fmtfuzz import (
     decision_seed_strategy,
     describe_format,
     format_strategy,
+    fuzz_strategy,
     message_sequence_strategy,
     mutate_malformed,
     mutate_valid,
@@ -31,6 +37,34 @@ from fmtfuzz import (
 )
 from fmtspec import DecodeError, ExcessDecodeError, decode, encode, types
 from fmtspec.types._converter import Converter
+
+
+class _PacketKind(IntEnum):
+    PING = 1
+    PONG = 4
+
+
+def _copy_value(values):
+    return values[("count",)]
+
+
+def _raise_derivation(_values):
+    raise RuntimeError("derived callback failed")
+
+
+def _copy_sequence_is_valid(messages):
+    if len(messages) != 1:
+        return False
+    try:
+        decoded = decode(messages[0], {"count": types.u8, "copy": types.u8})
+    except (DecodeError, ExcessDecodeError):
+        return False
+    return decoded["copy"] == decoded["count"]
+
+
+def _copy_message_is_valid(data):
+    decoded = decode(data, {"count": types.u8, "copy": types.u8})
+    return decoded["copy"] == decoded["count"]
 
 
 class NumberBranch(msgspec.Struct, tag_field="kind", tag="num"):
@@ -472,6 +506,237 @@ def test_field_hints_are_generated_alongside_ordinary_values():
     strategy = format_strategy(fmt, field_hints={("opcode",): FieldHint((0xA5,), weight=2)})
 
     assert find(strategy, lambda value: value["opcode"] == 0xA5) == {"opcode": 0xA5}
+
+
+def test_enum_strategy_generates_declared_and_undefined_values_by_default():
+    enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
+    strategy = format_strategy({"kind": enum_fmt})
+
+    known = find(strategy, lambda value: int(value["kind"]) == 1)
+    unknown = find(strategy, lambda value: int(value["kind"]) == 2)
+
+    assert known["kind"] is _PacketKind.PING
+    assert type(unknown["kind"]) is int
+    assert int(unknown["kind"]) not in {int(member) for member in _PacketKind}
+    encoded = encode(unknown, {"kind": enum_fmt})
+    assert type(decode(encoded, {"kind": enum_fmt})["kind"]) is int
+
+
+def test_enum_policy_and_field_range_select_unknown_values():
+    enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
+    strategy = format_strategy(
+        {"kind": enum_fmt},
+        field_ranges={("kind",): FieldRange(min_value=2, max_value=3)},
+        enum_policies={("kind",): EnumPolicy(known_weight=0, unknown_weight=1)},
+    )
+
+    unknown = find(strategy, lambda value: value["kind"] == 2)
+    assert 2 <= unknown["kind"] <= 3
+
+
+def test_enum_policy_can_keep_generation_to_declared_members():
+    enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
+    strategy = format_strategy(
+        {"kind": enum_fmt},
+        enum_policies={("kind",): EnumPolicy(known_weight=1, unknown_weight=0)},
+    )
+
+    @settings(max_examples=20, derandomize=True)
+    @given(strategy)
+    def check(value):
+        assert int(value["kind"]) in {int(member) for member in _PacketKind}
+
+    check()
+
+
+def test_field_hints_can_emphasize_unknown_enum_values():
+    enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
+    strategy = format_strategy(
+        {"kind": enum_fmt},
+        field_hints={("kind",): FieldHint((0xA5,), weight=2)},
+    )
+
+    assert find(strategy, lambda value: value["kind"] == 0xA5)["kind"] == 0xA5
+
+
+def test_field_ranges_constrain_integer_and_bitfield_generation():
+    int_strategy = format_strategy(
+        {"value": types.i8},
+        field_ranges={("value",): FieldRange(min_value=-5, max_value=3)},
+    )
+    bitfield_strategy = format_strategy(
+        {"mode": types.Bitfield(bits=4)},
+        field_ranges={("mode",): FieldRange(min_value=3, max_value=6)},
+    )
+
+    @settings(max_examples=30, derandomize=True)
+    @given(int_strategy, bitfield_strategy)
+    def check(integer, bitfield):
+        assert -5 <= integer["value"] <= 3
+        assert 3 <= bitfield["mode"] <= 6
+
+    check()
+
+
+def test_field_range_targets_a_named_packed_bitfield():
+    fmt = {
+        "flags": types.Bitfields({"mode": types.Bitfield(bits=4), "ready": types.Bitfield(bits=1)})
+    }
+    strategy = format_strategy(
+        fmt,
+        field_ranges={("flags", "mode"): FieldRange(min_value=2, max_value=3)},
+    )
+
+    @settings(max_examples=20, derandomize=True)
+    @given(strategy)
+    def check(value):
+        assert 2 <= value["flags"]["mode"] <= 3
+
+    check()
+
+
+def test_bitfield_strategy_includes_curated_width_patterns():
+    strategy = format_strategy({"flags": types.Bitfield(bits=4)})
+
+    for pattern in (0, 0xF, 0x1, 0x2, 0x4, 0x8, 0x5, 0xA):
+        assert find(strategy, lambda value, pattern=pattern: value["flags"] == pattern)
+
+
+def test_field_derivation_computes_values_after_dependencies():
+    fmt = {"count": types.u8, "copy": types.u8}
+    strategy = format_strategy(
+        fmt,
+        field_derivations={
+            ("copy",): FieldDerivation(dependencies=(("count",),), derive=_copy_value),
+        },
+    )
+
+    @settings(max_examples=30, derandomize=True)
+    @given(strategy)
+    def check(value):
+        assert value["copy"] == value["count"]
+
+    check()
+
+
+def test_field_derivation_rejects_forward_dependencies():
+    with pytest.raises(FormatPlanError, match="must precede"):
+        compile_format(
+            {"copy": types.u8, "count": types.u8},
+            field_derivations={
+                ("copy",): FieldDerivation(
+                    dependencies=(("count",),),
+                    derive=_copy_value,
+                ),
+            },
+        )
+
+
+def test_field_derivation_callback_errors_are_visible():
+    strategy = format_strategy(
+        {"count": types.u8, "copy": types.u8},
+        field_derivations={
+            ("copy",): FieldDerivation(
+                dependencies=(("count",),),
+                derive=_raise_derivation,
+            ),
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="derived callback failed"):
+        find(strategy, lambda _value: True)
+
+
+def test_valid_mutation_recomputes_derived_fields():
+    fmt = {"count": types.u8, "copy": types.u8}
+    plan = compile_format(
+        fmt,
+        field_derivations={
+            ("copy",): FieldDerivation(dependencies=(("count",),), derive=_copy_value),
+        },
+    )
+    original = encode({"count": 1, "copy": 1}, fmt)
+
+    mutated = mutate_valid(original, plan, seed=0)
+    decoded = decode(mutated, fmt)
+
+    assert decoded["copy"] == decoded["count"]
+
+
+def test_valid_mutation_respects_field_ranges_and_recomputes_derivations():
+    fmt = {"count": types.u8, "copy": types.u8}
+    plan = compile_format(
+        fmt,
+        field_ranges={("count",): FieldRange(min_value=1, max_value=5)},
+        field_derivations={
+            ("copy",): FieldDerivation(dependencies=(("count",),), derive=_copy_value),
+        },
+    )
+    original = encode({"count": 1, "copy": 1}, fmt)
+
+    for seed in range(20):
+        decoded = decode(mutate_valid(original, plan, seed=seed), fmt)
+        assert 1 <= decoded["count"] <= 5
+        assert decoded["copy"] == decoded["count"]
+
+
+def test_field_range_and_enum_policy_validate_targets_and_domains():
+    with pytest.raises(FormatPlanError, match="not representable"):
+        compile_format(
+            {"value": types.u8},
+            field_ranges={("value",): FieldRange(min_value=-1)},
+        )
+
+    with pytest.raises(FormatPlanError, match="declared enum"):
+        compile_format(
+            {"kind": types.u8},
+            enum_policies={("kind",): EnumPolicy()},
+        )
+    with pytest.raises(ValueError, match="nonzero weight"):
+        EnumPolicy(known_weight=0, unknown_weight=0)
+
+
+def test_configured_plan_policies_flow_through_strategy_and_fuzzer_apis():
+    fmt = {"count": types.u8, "copy": types.u8}
+    derivations = {
+        ("copy",): FieldDerivation(dependencies=(("count",),), derive=_copy_value),
+    }
+    ranges = {("count",): FieldRange(min_value=1, max_value=5)}
+    plan = compile_format(fmt, field_ranges=ranges, field_derivations=derivations)
+    data = find(
+        binary_strategy(plan),
+        _copy_message_is_valid,
+    )
+    decoded = decode(data, fmt)
+    assert 1 <= decoded["count"] <= 5
+    assert decoded["copy"] == decoded["count"]
+
+    fuzzer = Fuzzer(
+        fmt,
+        lambda _data: None,
+        field_ranges=ranges,
+        field_derivations=derivations,
+    )
+    assert fuzzer.plan.field_ranges == plan.field_ranges
+    assert fuzzer.plan.field_derivations == plan.field_derivations
+
+    mixed = find(
+        fuzz_strategy(fmt, field_ranges=ranges, field_derivations=derivations),
+        _copy_message_is_valid,
+    )
+    assert _copy_message_is_valid(mixed)
+
+    sequence = find(
+        message_sequence_strategy(
+            fmt,
+            min_messages=1,
+            max_messages=1,
+            field_ranges=ranges,
+            field_derivations=derivations,
+        ),
+        _copy_sequence_is_valid,
+    )
+    assert len(sequence) == 1
 
 
 def test_valid_mutation_changes_dynamic_array_shape_with_its_count():
