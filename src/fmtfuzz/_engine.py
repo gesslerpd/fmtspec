@@ -121,16 +121,15 @@ def fuzz_strategy(  # noqa: PLR0913
     )
     fmt = plan
     valid = binary_strategy(plan, max_size=max_size)
-    sources: list[SearchStrategy[bytes]] = [valid]
+    base = valid
 
     if corpus is not None:
         stored = corpus.load()
         if any(len(data) > max_size for data in stored):
             raise ValueError(f"Corpus contains an input larger than max_size={max_size}")
         if stored:
-            sources.append(st.sampled_from(stored))
+            base = st.one_of(valid, st.sampled_from(stored))
 
-    base = sources[0] if len(sources) == 1 else st.one_of(*sources)
     valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=fmt, max_size=max_size))
     malformed_mutations = base.flatmap(partial(_malformed_mutations, fmt=fmt, max_size=max_size))
     return st.one_of(base, valid_mutations, malformed_mutations)

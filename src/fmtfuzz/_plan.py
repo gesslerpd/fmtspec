@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
@@ -104,6 +104,9 @@ class EnumPolicy:
             raise ValueError("EnumPolicy must give at least one value category nonzero weight")
 
 
+_DEFAULT_ENUM_POLICY = EnumPolicy()
+
+
 @dataclass(frozen=True, slots=True)
 class FieldDerivation:
     """Pure callback for deriving one field from explicitly named values."""
@@ -166,35 +169,75 @@ class FormatPlan:
     field_ranges: tuple[tuple[FormatPath, FieldRange], ...] = ()
     enum_policies: tuple[tuple[FormatPath, EnumPolicy], ...] = ()
     field_derivations: tuple[tuple[FormatPath, FieldDerivation], ...] = ()
+    _nodes: tuple[FormatPlanNode, ...] = field(init=False, repr=False, compare=False)
+    _hint_index: Mapping[FormatPath, FieldHint] = field(init=False, repr=False, compare=False)
+    _range_index: Mapping[FormatPath, FieldRange] = field(init=False, repr=False, compare=False)
+    _enum_policy_index: Mapping[FormatPath, EnumPolicy] = field(
+        init=False, repr=False, compare=False
+    )
+    _derivation_index: Mapping[FormatPath, FieldDerivation] = field(
+        init=False, repr=False, compare=False
+    )
+    _dependency_index: Mapping[tuple[FormatPath, str], FormatDependency] = field(
+        init=False, repr=False, compare=False
+    )
+    _branch_index: Mapping[FormatPath, FormatPlanNode] = field(
+        init=False, repr=False, compare=False
+    )
 
-    def nodes(self):
+    def __post_init__(self) -> None:
+        nodes = tuple(_walk_nodes(self.root))
+        dependencies: dict[tuple[FormatPath, str], FormatDependency] = {}
+        branches: dict[FormatPath, FormatPlanNode] = {}
+        for node in nodes:
+            if isinstance(node.fmt, (Switch, TaggedUnion)):
+                branches.setdefault(node.path, node)
+        for dependency in self.dependencies:
+            dependencies.setdefault(
+                (dependency.source_path, dependency.relation),
+                dependency,
+            )
+        object.__setattr__(self, "_nodes", nodes)
+        object.__setattr__(self, "_hint_index", MappingProxyType(dict(self.field_hints)))
+        object.__setattr__(self, "_range_index", MappingProxyType(dict(self.field_ranges)))
+        object.__setattr__(
+            self,
+            "_enum_policy_index",
+            MappingProxyType(dict(self.enum_policies)),
+        )
+        object.__setattr__(
+            self,
+            "_derivation_index",
+            MappingProxyType(dict(self.field_derivations)),
+        )
+        object.__setattr__(self, "_dependency_index", MappingProxyType(dependencies))
+        object.__setattr__(self, "_branch_index", MappingProxyType(branches))
+
+    def nodes(self) -> Iterator[FormatPlanNode]:
         """Yield this plan's nodes in depth-first wire order."""
-        yield from _walk_nodes(self.root)
+        return iter(self._nodes)
 
     def hint_for(self, path: FormatPath) -> FieldHint | None:
-        return next((hint for hint_path, hint in self.field_hints if hint_path == path), None)
+        return self._hint_index.get(path)
 
     def range_for(self, path: FormatPath) -> FieldRange | None:
-        return next(
-            (field_range for range_path, field_range in self.field_ranges if range_path == path),
-            None,
-        )
+        return self._range_index.get(path)
 
     def enum_policy_for(self, path: FormatPath) -> EnumPolicy:
-        return next(
-            (policy for policy_path, policy in self.enum_policies if policy_path == path),
-            EnumPolicy(),
-        )
+        return self._enum_policy_index.get(path, _DEFAULT_ENUM_POLICY)
 
     def derivation_for(self, path: FormatPath) -> FieldDerivation | None:
-        return next(
-            (
-                derivation
-                for derivation_path, derivation in self.field_derivations
-                if derivation_path == path
-            ),
-            None,
-        )
+        return self._derivation_index.get(path)
+
+    def dependency_for(
+        self,
+        source_path: FormatPath,
+        relation: str,
+    ) -> FormatDependency | None:
+        return self._dependency_index.get((source_path, relation))
+
+    def branch_for(self, path: FormatPath) -> FormatPlanNode | None:
+        return self._branch_index.get(path)
 
 
 def _walk_nodes(node: FormatPlanNode):
@@ -263,17 +306,15 @@ def _child_path(path: FormatPath, child: FormatNode) -> FormatPath:
     return path
 
 
-def _references(fmt: Any) -> tuple[tuple[str, Ref], ...]:
-    references: list[tuple[str, Ref]] = []
+def _references(fmt: Any) -> Iterator[tuple[str, Ref]]:
     if isinstance(fmt, Sized) and isinstance(fmt.length, Ref):
-        references.append(("length", fmt.length))
+        yield "length", fmt.length
     if isinstance(fmt, Array):
-        references.extend(("dimension", dim) for dim in fmt.dims if isinstance(dim, Ref))
+        yield from (("dimension", dim) for dim in fmt.dims if isinstance(dim, Ref))
     if isinstance(fmt, Switch) and isinstance(fmt.key, Ref):
-        references.append(("switch", fmt.key))
+        yield "switch", fmt.key
     if isinstance(fmt, TaggedUnion) and isinstance(fmt.tag, Ref):
-        references.append(("tag", fmt.tag))
-    return tuple(references)
+        yield "tag", fmt.tag
 
 
 def _compile_node(

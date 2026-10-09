@@ -133,6 +133,25 @@ def test_array_reference_strategy_respects_maximum(value):
     assert value["length"] == len(value["data"])
 
 
+def test_single_item_array_supports_a_tail_consuming_element():
+    fmt = {
+        "kind": types.u8,
+        "items": types.array(
+            types.Switch(types.Ref("kind"), {1: types.u8}),
+            dims=1,
+        ),
+    }
+
+    @settings(max_examples=20, derandomize=True)
+    @given(format_strategy(fmt))
+    def check(value):
+        assert value["kind"] == 1
+        assert len(value["items"]) == 1
+        assert 0 <= value["items"][0] <= 255
+
+    check()
+
+
 def test_reference_sized_field_strategy_respects_maximum():
     fmt = {
         "length": types.u8,
@@ -547,6 +566,17 @@ def test_enum_policy_can_keep_generation_to_declared_members():
         assert int(value["kind"]) in {int(member) for member in _PacketKind}
 
     check()
+
+
+def test_enum_complement_strategy_handles_nearly_full_integer_domains():
+    dense_enum = IntEnum("DenseEnum", {f"VALUE_{value}": value for value in range(255)})
+    enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=dense_enum)
+    strategy = format_strategy(
+        {"kind": enum_fmt},
+        enum_policies={("kind",): EnumPolicy(known_weight=0, unknown_weight=1)},
+    )
+
+    assert find(strategy, lambda value: value["kind"] == 255) == {"kind": 255}
 
 
 def test_field_hints_can_emphasize_unknown_enum_values():

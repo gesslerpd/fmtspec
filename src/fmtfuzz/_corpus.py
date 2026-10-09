@@ -65,4 +65,4 @@ class Corpus:
         return iter(self.load())
 
     def __len__(self) -> int:
-        return len(tuple(self.directory.glob("*.bin")))
+        return sum(1 for _ in self.directory.glob("*.bin"))

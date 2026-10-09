@@ -51,7 +51,121 @@ from ._plan import (
 _NO_CHANGE = object()
 
 
-def _replacement(  # noqa: PLR0911, PLR0912, PLR0915
+def _first_unknown_integer(low: int, high: int, known_values: set[int]) -> int | None:
+    return next(
+        (candidate for candidate in range(low, high + 1) if candidate not in known_values), None
+    )
+
+
+def _add_candidate_weight(
+    candidates: dict[int, int],
+    candidate: int,
+    weight: int,
+) -> None:
+    if weight:
+        candidates[candidate] = candidates.get(candidate, 0) + weight
+
+
+def _integer_candidates(  # noqa: PLR0912
+    fmt: Int,
+    value: Any,
+    low: int,
+    high: int,
+    enum_policy: EnumPolicy,
+) -> dict[int, int]:
+    candidates: dict[int, int] = {}
+    base = [low, high, 0, 1, -1]
+    if isinstance(value, int):
+        flips = (value ^ 1, value + 1, value - 1)
+    else:
+        flips = ()
+    if fmt.enum is None:
+        for candidate in (*base, *flips):
+            if low <= candidate <= high:
+                _add_candidate_weight(candidates, candidate, 1)
+        return candidates
+
+    members = tuple(member for member in fmt.enum if low <= int(member) <= high)
+    member_values = {int(member) for member in members}
+    for candidate in base:
+        if low <= candidate <= high:
+            known = candidate in member_values
+            if (known and enum_policy.known_weight) or (not known and enum_policy.unknown_weight):
+                _add_candidate_weight(candidates, candidate, 1)
+    for candidate in dict.fromkeys(base):
+        if low <= candidate <= high and candidate not in member_values:
+            _add_candidate_weight(candidates, candidate, enum_policy.unknown_weight)
+    for member in members:
+        _add_candidate_weight(candidates, int(member), enum_policy.known_weight)
+    for candidate in flips:
+        if low <= candidate <= high:
+            weight = (
+                enum_policy.known_weight
+                if candidate in member_values
+                else enum_policy.unknown_weight
+            )
+            _add_candidate_weight(candidates, candidate, weight)
+    unknown = _first_unknown_integer(low, high, member_values)
+    if unknown is not None:
+        _add_candidate_weight(candidates, unknown, enum_policy.unknown_weight)
+    return candidates
+
+
+def _weighted_candidate(candidates: Mapping[int, int], rng: random.Random) -> int | None:
+    selection = rng.randrange(sum(candidates.values()))
+    for candidate, weight in candidates.items():
+        selection -= weight
+        if selection < 0:
+            return candidate
+    return None
+
+
+def _integer_replacement(
+    fmt: Int,
+    value: Any,
+    rng: random.Random,
+    field_range: FieldRange | None,
+    enum_policy: EnumPolicy,
+) -> Any:
+    bits = fmt.size * 8
+    low = -(1 << (bits - 1)) if fmt.signed else 0
+    high = (1 << (bits - (1 if fmt.signed else 0))) - 1
+    if field_range is not None:
+        low = max(low, field_range.min_value if field_range.min_value is not None else low)
+        high = min(high, field_range.max_value if field_range.max_value is not None else high)
+    candidates = _integer_candidates(fmt, value, low, high, enum_policy)
+    candidates.pop(value, None)
+    replacement = _weighted_candidate(candidates, rng) if candidates else None
+    return replacement if replacement is not None else _NO_CHANGE
+
+
+def _bitfield_replacement(
+    fmt: Bitfield,
+    value: Any,
+    rng: random.Random,
+    field_range: FieldRange | None,
+) -> Any:
+    low = max(
+        0,
+        field_range.min_value
+        if field_range is not None and field_range.min_value is not None
+        else 0,
+    )
+    high = min(
+        fmt.mask,
+        field_range.max_value
+        if field_range is not None and field_range.max_value is not None
+        else fmt.mask,
+    )
+    candidates = {low, high, 1, value ^ 1}
+    candidates.update(1 << bit for bit in range(fmt.bits))
+    candidates.update(high ^ (1 << bit) for bit in range(fmt.bits))
+    alternatives = [candidate for candidate in candidates if low <= candidate <= high]
+    alternatives = [candidate for candidate in alternatives if candidate != value]
+    return rng.choice(alternatives) if alternatives else _NO_CHANGE
+
+
+def _replacement(  # noqa: PLR0911, PLR0912
     fmt: Any,
     value: Any,
     rng: random.Random,
@@ -60,85 +174,10 @@ def _replacement(  # noqa: PLR0911, PLR0912, PLR0915
     enum_policy: EnumPolicy = EnumPolicy(),
 ) -> Any:
     if isinstance(fmt, Int):
-        bits = fmt.size * 8
-        minimum = -(1 << (bits - 1)) if fmt.signed else 0
-        maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
-        if field_range is not None:
-            minimum = max(
-                minimum,
-                field_range.min_value if field_range.min_value is not None else minimum,
-            )
-            maximum = min(
-                maximum,
-                field_range.max_value if field_range.max_value is not None else maximum,
-            )
-        candidates = [minimum, maximum, 0, 1, -1]
-        if fmt.enum is not None:
-            members = {int(member) for member in fmt.enum}
-            if enum_policy.known_weight:
-                candidates.extend(
-                    member
-                    for member in fmt.enum
-                    if minimum <= int(member) <= maximum
-                    for _ in range(enum_policy.known_weight)
-                )
-            if enum_policy.unknown_weight:
-                unknowns = sorted(
-                    candidate
-                    for candidate in candidates
-                    if minimum <= candidate <= maximum and candidate not in members
-                )
-                candidates.extend(
-                    candidate for candidate in unknowns for _ in range(enum_policy.unknown_weight)
-                )
-                candidate = minimum
-                for member in sorted(members):
-                    if member > candidate:
-                        break
-                    if member == candidate:
-                        candidate += 1
-                if candidate <= maximum:
-                    candidates.extend(candidate for _ in range(enum_policy.unknown_weight))
-        if isinstance(value, int):
-            candidates.append(value ^ 1)
-            candidates.extend((value + 1, value - 1))
-        candidates = [candidate for candidate in candidates if minimum <= int(candidate) <= maximum]
-        if fmt.enum is not None:
-            members = {int(member) for member in fmt.enum}
-            candidates = [
-                candidate
-                for candidate in candidates
-                if (
-                    enum_policy.known_weight
-                    if int(candidate) in members
-                    else enum_policy.unknown_weight
-                )
-            ]
-        alternatives = [candidate for candidate in candidates if candidate != value]
-        if alternatives:
-            return rng.choice(alternatives)
-        if minimum < maximum:
-            return minimum if value != minimum else maximum
-        return _NO_CHANGE
+        return _integer_replacement(fmt, value, rng, field_range, enum_policy)
 
     if isinstance(fmt, Bitfield):
-        maximum = fmt.mask
-        minimum = 0
-        if field_range is not None:
-            minimum = max(
-                minimum,
-                field_range.min_value if field_range.min_value is not None else minimum,
-            )
-            maximum = min(
-                maximum,
-                field_range.max_value if field_range.max_value is not None else maximum,
-            )
-        candidates = [minimum, maximum, 1, value ^ 1]
-        candidates.extend(1 << bit for bit in range(fmt.bits))
-        candidates.extend(maximum ^ (1 << bit) for bit in range(fmt.bits))
-        alternatives = [candidate for candidate in candidates if minimum <= candidate <= maximum]
-        alternatives = [candidate for candidate in alternatives if candidate != value]
-        return rng.choice(alternatives) if alternatives else _NO_CHANGE
+        return _bitfield_replacement(fmt, value, rng, field_range)
 
     if isinstance(fmt, Float):
         alternatives = [0.0, 1.0, -1.0, 0.5, -0.5]
@@ -542,14 +581,7 @@ def _branch_candidates(
     rng: random.Random,
 ) -> Iterator[Any]:
     relation = "switch" if isinstance(fmt, Switch) else "tag"
-    dependency = next(
-        (
-            item
-            for item in plan.dependencies
-            if item.source_path == node.path and item.relation == relation
-        ),
-        None,
-    )
+    dependency = plan.dependency_for(node.path, relation)
     if dependency is None:
         return
     current_tag = _get_at(value, dependency.target_path)
@@ -752,15 +784,7 @@ def _dependency_corruptions(  # noqa: PLR0912, PLR0915
                 elif current > minimum:
                     replacement = current - 1
         elif dependency.relation in ("switch", "tag"):
-            source = next(
-                (
-                    node
-                    for node in plan.nodes()
-                    if node.path == dependency.source_path
-                    and isinstance(node.fmt, (Switch, TaggedUnion))
-                ),
-                None,
-            )
+            source = plan.branch_for(dependency.source_path)
             if source is None:
                 continue
             fmt = source.fmt
