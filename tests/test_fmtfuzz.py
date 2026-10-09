@@ -3,8 +3,9 @@ from typing import Annotated
 
 import msgspec
 import pytest
-from hypothesis import find, given, settings
+from hypothesis import event, find, given, settings, target
 from hypothesis import strategies as st
+from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 from fmtfuzz import (
     Corpus,
@@ -22,6 +23,7 @@ from fmtfuzz import (
     decision_seed_strategy,
     describe_format,
     format_strategy,
+    message_sequence_strategy,
     mutate_malformed,
     mutate_valid,
     register_format_strategy,
@@ -37,6 +39,44 @@ class NumberBranch(msgspec.Struct, tag_field="kind", tag="num"):
 
 class RawBranch(msgspec.Struct, tag_field="kind", tag="raw"):
     value: Annotated[bytes, types.Bytes(2)]
+
+
+class _MessageSequenceStateMachine(RuleBasedStateMachine):
+    def __init__(self):
+        super().__init__()
+        self.accepted = 0
+        self.last_value = None
+
+    @rule(
+        messages=message_sequence_strategy(
+            types.u8,
+            min_messages=1,
+            max_messages=3,
+            max_message_size=1,
+        )
+    )
+    def process_messages(self, messages):
+        for data in messages:
+            try:
+                value = decode(data, types.u8)
+            except (DecodeError, ExcessDecodeError):
+                event("message rejected")
+            else:
+                self.accepted += 1
+                self.last_value = value
+
+    @invariant()
+    def tracks_valid_messages(self):
+        assert self.accepted >= 0
+        assert self.last_value is None or 0 <= self.last_value <= 255
+
+
+TestMessageSequenceStateMachine = _MessageSequenceStateMachine.TestCase
+TestMessageSequenceStateMachine.settings = settings(
+    max_examples=10,
+    stateful_step_count=4,
+    derandomize=True,
+)
 
 
 @settings(max_examples=25, derandomize=True)
@@ -331,6 +371,76 @@ def test_corpus_rejects_oversized_input(tmp_path):
 
     with pytest.raises(ValueError, match="exceeds"):
         corpus.add(b"too large")
+
+
+@settings(max_examples=30, derandomize=True)
+@given(
+    message_sequence_strategy(
+        types.u8,
+        min_messages=1,
+        max_messages=5,
+        max_message_size=2,
+    )
+)
+def test_message_sequence_strategy_respects_count_and_size_bounds(messages):
+    assert 1 <= len(messages) <= 5
+    assert all(len(message) <= 2 for message in messages)
+    event(f"message count: {len(messages)}")
+    target(sum(map(len, messages)), label="sequence bytes")
+
+
+@pytest.mark.parametrize(
+    ("min_messages", "max_messages", "max_message_size"),
+    [(-1, 2, 4), (3, 2, 4), (0, -1, 4), (0, 2, 0)],
+)
+def test_message_sequence_strategy_rejects_invalid_bounds(
+    min_messages,
+    max_messages,
+    max_message_size,
+):
+    with pytest.raises(ValueError, match="message"):
+        message_sequence_strategy(
+            types.u8,
+            min_messages=min_messages,
+            max_messages=max_messages,
+            max_message_size=max_message_size,
+        )
+
+
+def test_message_sequence_strategy_supports_compiled_plans_and_corpus(tmp_path):
+    fmt = {"opcode": types.u8}
+    plan = compile_format(fmt, field_hints={("opcode",): FieldHint((0xA5,), weight=2)})
+    hinted = message_sequence_strategy(
+        plan,
+        min_messages=1,
+        max_messages=2,
+        max_message_size=1,
+    )
+
+    assert b"\xa5" in find(hinted, lambda messages: b"\xa5" in messages)
+
+    corpus = Corpus(tmp_path / "sequence-corpus", max_size=1)
+    corpus.add(b"\xfe")
+    seeded = message_sequence_strategy(
+        plan,
+        min_messages=1,
+        max_messages=2,
+        max_message_size=1,
+        corpus=corpus,
+    )
+
+    assert b"\xfe" in find(seeded, lambda messages: b"\xfe" in messages)
+
+
+def test_message_sequence_strategy_supports_zero_messages():
+    strategy = message_sequence_strategy(
+        types.u8,
+        min_messages=0,
+        max_messages=0,
+        max_message_size=1,
+    )
+
+    assert find(strategy, lambda _messages: True) == ()
 
 
 def test_compiled_plan_tracks_dependencies_and_field_hints():

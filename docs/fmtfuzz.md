@@ -45,27 +45,108 @@ Use `format_strategy(fmt)` to generate Python values,
 `fuzz_strategy(fmt)` to combine valid encodings, structure-preserving and
 structural valid mutations, and malformed mutations. `binary_strategy()` is
 valid-only; the mixed campaign strategy also includes malformed inputs. A
-strategy can be used in an ordinary Hypothesis test:
+strategy can be used in an ordinary Hypothesis test. Hypothesis remains in
+control of generation, shrinking, deadlines, settings, and its example database:
 
 ```python
-from hypothesis import given
+from hypothesis import event, given, target
+from fmtspec import DecodeError, ExcessDecodeError
 from fmtfuzz import fuzz_strategy
 
 
 @given(fuzz_strategy(packet_fmt, max_size=1024))
 def test_packet_parser(data: bytes) -> None:
-    parse_packet(data)
+    event("empty" if not data else "non-empty")
+    target(len(data), label="input size")
+    try:
+        parse_packet(data)
+    except (DecodeError, ExcessDecodeError):
+        event("rejected")
+    else:
+        event("accepted")
 ```
 
-Install HypoFuzz separately if coverage-guided scheduling is wanted, then run
-the test through its Hypothesis CLI:
+`event()` records semantic categories and `target()` records a numeric
+objective. These signals are useful to HypoFuzz as well as in normal Hypothesis
+test runs. Other unexpected target exceptions should remain uncaught so
+Hypothesis can report and shrink them.
+
+For multiple independent messages, `message_sequence_strategy()` returns a
+bounded tuple. It uses the same mixed strategy for each message:
+
+```python
+from hypothesis import given
+from fmtfuzz import message_sequence_strategy
+
+
+@given(
+    message_sequence_strategy(
+        packet_fmt,
+        min_messages=1,
+        max_messages=8,
+        max_message_size=1024,
+    )
+)
+def test_packet_batch(messages: tuple[bytes, ...]) -> None:
+    for message in messages:
+        parse_packet(message)
+```
+
+Each message is generated independently; the strategy bounds both the number
+of messages and each message's byte length, so total payload bytes are at most
+`max_messages * max_message_size`. It does not model dependencies between
+messages.
+
+For stateful request/response protocols, define the transitions and invariants
+with Hypothesis's stateful API, and use `fuzz_strategy()` as a rule argument.
+This keeps protocol-specific state semantics with the test:
+
+```python
+from fmtspec import decode, encode
+from hypothesis import event
+from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
+from fmtfuzz import fuzz_strategy
+
+
+class PacketSessionMachine(RuleBasedStateMachine):
+    def __init__(self):
+        super().__init__()
+        self.last_packet = None
+
+    @rule(data=fuzz_strategy(packet_fmt, max_size=1024))
+    def receive(self, data: bytes) -> None:
+        try:
+            self.last_packet = decode(data, packet_fmt)
+        except (DecodeError, ExcessDecodeError):
+            event("rejected")
+        else:
+            event("accepted")
+
+    @invariant()
+    def last_packet_roundtrips(self) -> None:
+        if self.last_packet is not None:
+            assert decode(encode(self.last_packet, packet_fmt), packet_fmt) == self.last_packet
+
+
+TestPacketSession = PacketSessionMachine.TestCase
+```
+
+Adapt the rule to call the real session API and assert invariants over its
+state. Hypothesis and HypoFuzz will then explore sequences of rule calls.
+
+Install HypoFuzz separately if adaptive coverage-guided scheduling is wanted.
+It discovers ordinary Hypothesis tests (including state-machine test cases);
+run the test module through its Hypothesis CLI:
 
 ```console
 hypothesis fuzz tests/test_packet_parser.py
 ```
 
-`fmtfuzz` does not implement its own code-coverage scheduler; `Fuzzer` accepts a
-feedback callback that returns a hashable novelty key. The first input for each
+This `@given`/state-machine path is the recommended HypoFuzz integration.
+`Fuzzer.run()` is a bounded convenience runner that invokes its own Hypothesis
+test directly; it is not itself a discoverable test for HypoFuzz. `fmtfuzz`
+does not implement its own coverage scheduler. In `Fuzzer.run()`, the optional
+feedback callback can return a hashable novelty key; the first input for each
 new key is saved to the optional corpus.
 
 ## Compiled plans, hints, and decision seeds
@@ -157,7 +238,21 @@ accepted by the custom type's `encode` method.
 deduplicates them. Pass it to `Fuzzer` to include stored inputs in future
 strategies and persist feedback-novel examples. Add seed files with
 `corpus.add(Path(seed_path).read_bytes())`; `corpus.load()` returns entries in
-deterministic order.
+deterministic order. `fuzz_strategy()` snapshots the corpus when the strategy
+is constructed. `Fuzzer.run()` constructs a strategy at the start of each run,
+so feedback-added entries can seed a later run but are not injected into a
+strategy that is already running.
+
+These stores have different roles:
+
+- `FuzzConfig.database` configures Hypothesis's example database for
+  `Fuzzer.run()`; pass an `ExampleDatabase` to enable persistent examples for
+  that runner. Ordinary `@given` tests use their own Hypothesis settings.
+- `Corpus` is an explicit content-addressed store of raw byte inputs shared
+  when callers pass it to `fmtfuzz`.
+- HypoFuzz maintains its own adaptive seed pool and coverage feedback when it
+  runs discovered Hypothesis tests. It does not require `Corpus` or
+  `Fuzzer.run()`.
 
 The CLI imports a format and bytes callback using `module:attribute` paths:
 

@@ -11,6 +11,7 @@ from ._engine import FuzzResult as FuzzResult
 from ._engine import FuzzTarget as FuzzTarget
 from ._engine import Fuzzer as Fuzzer
 from ._engine import fuzz_strategy as fuzz_strategy
+from ._engine import message_sequence_strategy as message_sequence_strategy
 from ._metadata import FormatChild as FormatChild
 from ._metadata import FormatMetadata as FormatMetadata
 from ._metadata import FormatNode as FormatNode

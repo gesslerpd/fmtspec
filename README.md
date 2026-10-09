@@ -135,7 +135,10 @@ The [`fmtfuzz` package](docs/fmtfuzz.md) derives Hypothesis strategies from an
 Its reusable format plans support reference-aware array, optional, and branch
 mutations, field-value hints, and replayable decision seeds. Use its `Fuzzer`
 API for a bounded campaign, or compose `fuzz_strategy(...)` with a Hypothesis
-test and run that test with HypoFuzz for coverage-guided exploration.
+test (or `message_sequence_strategy(...)` for bounded batches) and run that
+test with HypoFuzz for coverage-guided exploration. Protocol-specific
+multi-message state can be modeled with Hypothesis state machines; see the
+[fmtfuzz guide](docs/fmtfuzz.md) for `event()` and `target()` feedback examples.
 
 ### Inspect Layouts While Debugging
 

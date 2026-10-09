@@ -120,6 +120,43 @@ def fuzz_strategy(
     return st.one_of(base, valid_mutations, malformed_mutations)
 
 
+def message_sequence_strategy(  # noqa: PLR0913
+    fmt: Any,
+    *,
+    min_messages: int = 0,
+    max_messages: int = 8,
+    max_message_size: int = 4096,
+    corpus: Corpus | None = None,
+    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+) -> SearchStrategy[tuple[bytes, ...]]:
+    """Generate a bounded sequence of independently fuzzed binary messages.
+
+    The sequence is returned as a tuple. Each message uses the same mixed
+    valid/malformed strategy as :func:`fuzz_strategy`; protocol state and
+    message-to-message dependencies remain the caller's responsibility.
+    """
+    if min_messages < 0:
+        raise ValueError("min_messages must be non-negative")
+    if max_messages < 0:
+        raise ValueError("max_messages must be non-negative")
+    if min_messages > max_messages:
+        raise ValueError("min_messages cannot exceed max_messages")
+    if max_message_size < 1:
+        raise ValueError("max_message_size must be at least 1")
+
+    messages = fuzz_strategy(
+        fmt,
+        max_size=max_message_size,
+        corpus=corpus,
+        field_hints=field_hints,
+    )
+    return st.lists(
+        messages,
+        min_size=min_messages,
+        max_size=max_messages,
+    ).map(tuple)
+
+
 class Fuzzer:
     """Run a bytes target against format-derived Hypothesis examples.
 
