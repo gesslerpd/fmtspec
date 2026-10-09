@@ -151,6 +151,13 @@ class FormatPlanNode:
     recursive: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _PlanIndexes:
+    nodes: tuple[FormatPlanNode, ...]
+    dependencies: Mapping[tuple[FormatPath, DependencyKind], FormatDependency]
+    branches: Mapping[FormatPath, FormatPlanNode]
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class FormatPlan:
     """Reusable structural view and dependency graph for an fmtspec format.
@@ -159,88 +166,62 @@ class FormatPlan:
     snapshots of its structure and do not use a hidden identity-based cache.
     """
 
-    fmt: Any
     root: FormatPlanNode
     dependencies: tuple[FormatDependency, ...]
-    field_hints: tuple[tuple[FormatPath, FieldHint], ...] = ()
-    field_ranges: tuple[tuple[FormatPath, FieldRange], ...] = ()
-    enum_policies: tuple[tuple[FormatPath, EnumPolicy], ...] = ()
-    field_derivations: tuple[tuple[FormatPath, FieldDerivation], ...] = ()
-    _nodes: tuple[FormatPlanNode, ...] = field(init=False, repr=False, compare=False)
-    _hint_index: Mapping[FormatPath, FieldHint] = field(init=False, repr=False, compare=False)
-    _range_index: Mapping[FormatPath, FieldRange] = field(init=False, repr=False, compare=False)
-    _enum_policy_index: Mapping[FormatPath, EnumPolicy] = field(
-        init=False, repr=False, compare=False
-    )
-    _derivation_index: Mapping[FormatPath, FieldDerivation] = field(
-        init=False, repr=False, compare=False
-    )
-    _dependency_index: Mapping[tuple[FormatPath, DependencyKind], FormatDependency] = field(
-        init=False, repr=False, compare=False
-    )
-    _branch_index: Mapping[FormatPath, FormatPlanNode] = field(
-        init=False, repr=False, compare=False
-    )
+    field_hints: Mapping[FormatPath, FieldHint] = field(default_factory=dict)
+    field_ranges: Mapping[FormatPath, FieldRange] = field(default_factory=dict)
+    enum_policies: Mapping[FormatPath, EnumPolicy] = field(default_factory=dict)
+    field_derivations: Mapping[FormatPath, FieldDerivation] = field(default_factory=dict)
+    _indexes: _PlanIndexes = field(repr=False, compare=False, kw_only=True)
 
-    def __post_init__(self) -> None:
-        nodes = tuple(_walk_nodes(self.root))
-        dependencies: dict[tuple[FormatPath, DependencyKind], FormatDependency] = {}
-        branches: dict[FormatPath, FormatPlanNode] = {}
-        for node in nodes:
-            if isinstance(node.fmt, (Switch, TaggedUnion)):
-                branches.setdefault(node.path, node)
-        for dependency in self.dependencies:
-            dependencies.setdefault(
-                (dependency.source_path, dependency.relation),
-                dependency,
-            )
-        object.__setattr__(self, "_nodes", nodes)
-        object.__setattr__(self, "_hint_index", MappingProxyType(dict(self.field_hints)))
-        object.__setattr__(self, "_range_index", MappingProxyType(dict(self.field_ranges)))
-        object.__setattr__(
-            self,
-            "_enum_policy_index",
-            MappingProxyType(dict(self.enum_policies)),
-        )
-        object.__setattr__(
-            self,
-            "_derivation_index",
-            MappingProxyType(dict(self.field_derivations)),
-        )
-        object.__setattr__(self, "_dependency_index", MappingProxyType(dependencies))
-        object.__setattr__(self, "_branch_index", MappingProxyType(branches))
+    @property
+    def fmt(self) -> Any:
+        return self.root.fmt
 
     def nodes(self) -> Iterator[FormatPlanNode]:
         """Yield this plan's nodes in depth-first wire order."""
-        return iter(self._nodes)
-
-    def hint_for(self, path: FormatPath) -> FieldHint | None:
-        return self._hint_index.get(path)
-
-    def range_for(self, path: FormatPath) -> FieldRange | None:
-        return self._range_index.get(path)
+        return iter(self._indexes.nodes)
 
     def enum_policy_for(self, path: FormatPath) -> EnumPolicy:
-        return self._enum_policy_index.get(path, _DEFAULT_ENUM_POLICY)
-
-    def derivation_for(self, path: FormatPath) -> FieldDerivation | None:
-        return self._derivation_index.get(path)
+        return self.enum_policies.get(path, _DEFAULT_ENUM_POLICY)
 
     def dependency_for(
         self,
         source_path: FormatPath,
         relation: DependencyKind,
     ) -> FormatDependency | None:
-        return self._dependency_index.get((source_path, relation))
+        return self._indexes.dependencies.get((source_path, relation))
 
     def branch_for(self, path: FormatPath) -> FormatPlanNode | None:
-        return self._branch_index.get(path)
+        return self._indexes.branches.get(path)
 
 
 def _walk_nodes(node: FormatPlanNode):
     yield node
     for child in node.children:
         yield from _walk_nodes(child)
+
+
+def _plan_indexes(
+    root: FormatPlanNode,
+    dependencies: tuple[FormatDependency, ...],
+) -> _PlanIndexes:
+    nodes = tuple(_walk_nodes(root))
+    dependency_index: dict[tuple[FormatPath, DependencyKind], FormatDependency] = {}
+    branch_index: dict[FormatPath, FormatPlanNode] = {}
+    for node in nodes:
+        if isinstance(node.fmt, (Switch, TaggedUnion)):
+            branch_index.setdefault(node.path, node)
+    for dependency in dependencies:
+        dependency_index.setdefault(
+            (dependency.source_path, dependency.relation),
+            dependency,
+        )
+    return _PlanIndexes(
+        nodes=nodes,
+        dependencies=MappingProxyType(dependency_index),
+        branches=MappingProxyType(branch_index),
+    )
 
 
 def _choices(fmt: Any) -> tuple[Any, ...]:
@@ -365,7 +346,7 @@ def _valid_hint(fmt: Any, value: Any) -> bool:  # noqa: PLR0911
 def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     fmt: Any,
     *,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+    field_hints: Mapping[FormatPath, FieldHint] | None = None,
     field_ranges: Mapping[FormatPath, FieldRange] | None = None,
     enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
     field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
@@ -394,7 +375,7 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
     dependencies: list[FormatDependency] = []
     root = _compile_node(metadata, (), (), dependencies)
     field_nodes = {node.path: node for node in _walk_nodes(root) if node.role in ("field", "item")}
-    normalized_hints: list[tuple[FormatPath, FieldHint]] = []
+    normalized_hints: dict[FormatPath, FieldHint] = {}
     if field_hints is not None:
         for path, hint in field_hints.items():
             if not isinstance(path, tuple):
@@ -405,16 +386,17 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
                 raise FormatPlanError(
                     f"Field hint path {path!r} does not identify a field"
                 ) from exc
-            normalized = hint if isinstance(hint, FieldHint) else FieldHint(tuple(hint))
-            invalid = [value for value in normalized.values if not _valid_hint(node.fmt, value)]
+            if not isinstance(hint, FieldHint):
+                raise TypeError(f"Field hint at {path!r} must be a FieldHint")
+            invalid = [value for value in hint.values if not _valid_hint(node.fmt, value)]
             if invalid:
                 raise FormatPlanError(
                     f"Field hint values {invalid!r} are invalid for "
                     f"{node.kind.__name__} field {path!r}"
                 )
-            normalized_hints.append((path, normalized))
+            normalized_hints[path] = hint
 
-    normalized_ranges: list[tuple[FormatPath, FieldRange]] = []
+    normalized_ranges: dict[FormatPath, FieldRange] = {}
     if field_ranges is not None:
         for path, field_range in field_ranges.items():
             if not isinstance(path, tuple):
@@ -441,9 +423,9 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
                 raise FormatPlanError(
                     f"Field range {field_range!r} is not representable by field {path!r}"
                 )
-            normalized_ranges.append((path, field_range))
+            normalized_ranges[path] = field_range
 
-    normalized_enum_policies: list[tuple[FormatPath, EnumPolicy]] = []
+    normalized_enum_policies: dict[FormatPath, EnumPolicy] = {}
     if enum_policies is not None:
         for path, policy in enum_policies.items():
             if not isinstance(path, tuple):
@@ -460,9 +442,9 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
                 )
             if not isinstance(policy, EnumPolicy):
                 raise TypeError(f"Enum policy at {path!r} must be an EnumPolicy")
-            normalized_enum_policies.append((path, policy))
+            normalized_enum_policies[path] = policy
 
-    normalized_derivations: list[tuple[FormatPath, FieldDerivation]] = []
+    normalized_derivations: dict[FormatPath, FieldDerivation] = {}
     if field_derivations is not None:
         field_order = {
             node.path: index
@@ -498,21 +480,25 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
                         f"Field derivation dependency {dependency_path!r} at {path!r} "
                         "must precede its target"
                     )
-            normalized_derivations.append((path, derivation))
-        normalized_derivations.sort(key=lambda item: field_order[item[0]])
+            normalized_derivations[path] = derivation
+        normalized_derivations = dict(
+            sorted(normalized_derivations.items(), key=lambda item: field_order[item[0]])
+        )
 
-    hint_paths = {path for path, _ in normalized_hints}
-    derivation_paths = {path for path, _ in normalized_derivations}
+    hint_paths = normalized_hints.keys()
+    derivation_paths = normalized_derivations.keys()
     if hint_paths & derivation_paths:
         conflict = min(hint_paths & derivation_paths, key=repr)
         raise FormatPlanError(f"Field {conflict!r} cannot have both a hint and a derivation")
 
+    compiled_dependencies = tuple(dependencies)
+    indexes = _plan_indexes(root, compiled_dependencies)
     return FormatPlan(
-        fmt=fmt,
         root=root,
-        dependencies=tuple(dependencies),
-        field_hints=tuple(normalized_hints),
-        field_ranges=tuple(normalized_ranges),
-        enum_policies=tuple(normalized_enum_policies),
-        field_derivations=tuple(normalized_derivations),
+        dependencies=compiled_dependencies,
+        field_hints=MappingProxyType(normalized_hints),
+        field_ranges=MappingProxyType(normalized_ranges),
+        enum_policies=MappingProxyType(normalized_enum_policies),
+        field_derivations=MappingProxyType(normalized_derivations),
+        _indexes=indexes,
     )

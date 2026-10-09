@@ -36,8 +36,6 @@ from fmtspec.types import (
 
 from ._plan import (
     EnumPolicy,
-    FieldDerivation,
-    FieldHint,
     FieldRange,
     FormatPath,
     FormatPlan,
@@ -300,7 +298,7 @@ def _mapping_field_strategy(  # noqa: PLR0911, PLR0912, PLR0913
     path: FormatPath,
     config: FormatPlan | None,
 ) -> SearchStrategy[Any]:
-    field_range = config.range_for(path) if config is not None else None
+    field_range = config.field_ranges.get(path) if config is not None else None
     match fmt:
         case Int() as int_fmt if (
             upper_bound is not None or allowed_values is not None or field_range is not None
@@ -806,7 +804,7 @@ def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
         else:
             limits, allowed = {}, {}
         child_path = (*path, key)
-        derivation = config.derivation_for(child_path) if config is not None else None
+        derivation = config.field_derivations.get(child_path) if config is not None else None
         if derivation is not None:
             inputs = {
                 dependency: _generated_dependency(
@@ -818,7 +816,7 @@ def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
                 for dependency in derivation.dependencies
             }
             derived = derivation.apply(inputs)
-            field_range = config.range_for(child_path)
+            field_range = config.field_ranges.get(child_path)
             if field_range is not None and not field_range.contains(derived):
                 raise UnsupportedFormatError(
                     f"Derived value {derived!r} is outside the range at {child_path!r}"
@@ -845,9 +843,9 @@ def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
             path=child_path,
             config=config,
         )
-        hint = config.hint_for(child_path) if config is not None else None
+        hint = config.field_hints.get(child_path) if config is not None else None
         if hint is not None:
-            field_range = config.range_for(child_path)
+            field_range = config.field_ranges.get(child_path)
             values = tuple(
                 value
                 for value in hint.values
@@ -943,7 +941,7 @@ def _value_strategy(  # noqa: PLR0911, PLR0912, PLR0913
         case Null():
             return st.none()
         case Bitfield():
-            field_range = config.range_for(path) if config is not None else None
+            field_range = config.field_ranges.get(path) if config is not None else None
             return _bitfield_strategy(fmt, field_range=field_range)
         case Bitfields():
             return _value_strategy(
@@ -1046,14 +1044,10 @@ def _value_strategy(  # noqa: PLR0911, PLR0912, PLR0913
             )
 
 
-def format_strategy(  # noqa: PLR0913
+def format_strategy(
     fmt: Any,
     *,
     max_size: int = 4096,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[Any]:
     """Build a Hypothesis strategy for Python values accepted by ``fmt``.
 
@@ -1062,13 +1056,7 @@ def format_strategy(  # noqa: PLR0913
     """
     if max_size < 1:
         raise ValueError("max_size must be at least 1")
-    plan = compile_format(
-        fmt,
-        field_hints=field_hints,
-        field_ranges=field_ranges,
-        enum_policies=enum_policies,
-        field_derivations=field_derivations,
-    )
+    plan = compile_format(fmt)
     return _value_strategy(
         plan.fmt,
         (),
@@ -1078,23 +1066,13 @@ def format_strategy(  # noqa: PLR0913
     )
 
 
-def binary_strategy(  # noqa: PLR0913
+def binary_strategy(
     fmt: Any,
     *,
     max_size: int = 4096,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[bytes]:
     """Build a strategy for valid encoded bytes accepted by ``fmt``."""
-    plan = compile_format(
-        fmt,
-        field_hints=field_hints,
-        field_ranges=field_ranges,
-        enum_policies=enum_policies,
-        field_derivations=field_derivations,
-    )
+    plan = compile_format(fmt)
     values = format_strategy(plan, max_size=max_size)
     strategy = values.map(partial(_encode_value, fmt=plan.fmt))
     return strategy.filter(partial(_within_size, maximum=max_size))

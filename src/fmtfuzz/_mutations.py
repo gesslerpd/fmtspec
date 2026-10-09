@@ -39,10 +39,7 @@ from fmtspec.types import (
 
 from ._plan import (
     EnumPolicy,
-    FieldDerivation,
-    FieldHint,
     FieldRange,
-    FormatPath,
     FormatPlan,
     FormatPlanNode,
     _integer_bounds,
@@ -224,7 +221,7 @@ def _walk_mutable(
         node.fmt,
         node.value,
         rng,
-        field_range=plan.range_for(path),
+        field_range=plan.field_ranges.get(path),
         enum_policy=plan.enum_policy_for(path),
     )
     if replacement is not _NO_CHANGE:
@@ -237,7 +234,7 @@ def _walk_mutable(
                 child_fmt,
                 original,
                 rng,
-                field_range=plan.range_for(child_path),
+                field_range=plan.field_ranges.get(child_path),
                 enum_policy=plan.enum_policy_for(child_path),
             )
             if child_replacement is not _NO_CHANGE:
@@ -481,19 +478,19 @@ def _values_at(value: Any, path: tuple[str | int, ...]) -> Iterator[Any]:
 def _within_plan_ranges(value: Any, plan: FormatPlan) -> bool:
     return all(
         all(field_range.contains(item) for item in _values_at(value, path))
-        for path, field_range in plan.field_ranges
+        for path, field_range in plan.field_ranges.items()
     )
 
 
 def _recompute_derived(value: Any, plan: FormatPlan) -> Any:
-    for path, derivation in plan.field_derivations:
+    for path, derivation in plan.field_derivations.items():
         dependency_values = {
             dependency: _get_at(value, dependency) for dependency in derivation.dependencies
         }
         if any(item is _NO_CHANGE for item in dependency_values.values()):
             raise ValueError(f"Cannot resolve dependencies for derived field {path!r}")
         derived = derivation.apply(dependency_values)
-        field_range = plan.range_for(path)
+        field_range = plan.field_ranges.get(path)
         if field_range is not None and not field_range.contains(derived):
             raise ValueError(
                 f"Derived value {derived!r} is outside the configured range at {path!r}"
@@ -631,16 +628,12 @@ def _structural_candidates(
             yield from _branch_candidates(value, node, fmt, plan, rng)
 
 
-def mutate_valid(  # noqa: PLR0912, PLR0913
+def mutate_valid(  # noqa: PLR0912
     data: bytes,
     fmt: Any,
     *,
     seed: int | None = None,
     max_size: int = 4096,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> bytes:
     """Mutate a scalar or format structure while preserving validity.
 
@@ -652,18 +645,12 @@ def mutate_valid(  # noqa: PLR0912, PLR0913
     if len(data) > max_size:
         raise ValueError(f"Input size {len(data)} exceeds max_size={max_size}")
 
-    plan = compile_format(
-        fmt,
-        field_hints=field_hints,
-        field_ranges=field_ranges,
-        enum_policies=enum_policies,
-        field_derivations=field_derivations,
-    )
+    plan = compile_format(fmt)
     fmt = plan.fmt
     value, tree = decode_inspect(data, fmt)
     rng = random.Random(seed)
     candidates: list[tuple[Any, bool]] = []
-    derived_paths = {path for path, _ in plan.field_derivations}
+    derived_paths = set(plan.field_derivations)
     for path, original, replacement in _walk_mutable(tree, (), rng, plan):
         if path in derived_paths:
             continue
@@ -674,7 +661,7 @@ def mutate_valid(  # noqa: PLR0912, PLR0913
         except (AttributeError, IndexError, KeyError, TypeError):
             continue
 
-    for path, hint in plan.field_hints:
+    for path, hint in plan.field_hints.items():
         original = _get_at(value, path)
         for replacement in hint.values:
             if replacement == original:

@@ -515,10 +515,11 @@ def test_compiled_plan_tracks_dependencies_and_field_hints():
     plan = compile_format(fmt, field_hints={("count",): FieldHint((2, 3), weight=3)})
 
     assert isinstance(plan, FormatPlan)
+    assert plan.fmt is plan.root.fmt
     assert plan.dependencies[0].source_path == ("items",)
     assert plan.dependencies[0].target_path == ("count",)
     assert plan.dependencies[0].relation == "dimension"
-    assert plan.hint_for(("count",)) == FieldHint((2, 3), weight=3)
+    assert plan.field_hints[("count",)] == FieldHint((2, 3), weight=3)
     assert compile_format(plan) is plan
     switch_plan = compile_format(
         {
@@ -531,10 +532,18 @@ def test_compiled_plan_tracks_dependencies_and_field_hints():
 
 
 def test_field_hints_are_generated_alongside_ordinary_values():
-    fmt = {"opcode": types.u8}
-    strategy = format_strategy(fmt, field_hints={("opcode",): FieldHint((0xA5,), weight=2)})
+    plan = compile_format(
+        {"opcode": types.u8},
+        field_hints={("opcode",): FieldHint((0xA5,), weight=2)},
+    )
+    strategy = format_strategy(plan)
 
     assert find(strategy, lambda value: value["opcode"] == 0xA5) == {"opcode": 0xA5}
+
+
+def test_field_hints_require_explicit_field_hint_values():
+    with pytest.raises(TypeError, match="must be a FieldHint"):
+        compile_format({"opcode": types.u8}, field_hints={("opcode",): (0xA5,)})
 
 
 def test_enum_strategy_generates_declared_and_undefined_values_by_default():
@@ -553,11 +562,12 @@ def test_enum_strategy_generates_declared_and_undefined_values_by_default():
 
 def test_enum_policy_and_field_range_select_unknown_values():
     enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
-    strategy = format_strategy(
+    plan = compile_format(
         {"kind": enum_fmt},
         field_ranges={("kind",): FieldRange(min_value=2, max_value=3)},
         enum_policies={("kind",): EnumPolicy(known_weight=0, unknown_weight=1)},
     )
+    strategy = format_strategy(plan)
 
     unknown = find(strategy, lambda value: value["kind"] == 2)
     assert 2 <= unknown["kind"] <= 3
@@ -565,10 +575,11 @@ def test_enum_policy_and_field_range_select_unknown_values():
 
 def test_enum_policy_can_keep_generation_to_declared_members():
     enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
-    strategy = format_strategy(
+    plan = compile_format(
         {"kind": enum_fmt},
         enum_policies={("kind",): EnumPolicy(known_weight=1, unknown_weight=0)},
     )
+    strategy = format_strategy(plan)
 
     @settings(max_examples=20, derandomize=True)
     @given(strategy)
@@ -581,33 +592,37 @@ def test_enum_policy_can_keep_generation_to_declared_members():
 def test_enum_complement_strategy_handles_nearly_full_integer_domains():
     dense_enum = IntEnum("DenseEnum", {f"VALUE_{value}": value for value in range(255)})
     enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=dense_enum)
-    strategy = format_strategy(
+    plan = compile_format(
         {"kind": enum_fmt},
         enum_policies={("kind",): EnumPolicy(known_weight=0, unknown_weight=1)},
     )
+    strategy = format_strategy(plan)
 
     assert find(strategy, lambda value: value["kind"] == 255) == {"kind": 255}
 
 
 def test_field_hints_can_emphasize_unknown_enum_values():
     enum_fmt = types.Int(size=1, byteorder="big", signed=False, enum=_PacketKind)
-    strategy = format_strategy(
+    plan = compile_format(
         {"kind": enum_fmt},
         field_hints={("kind",): FieldHint((0xA5,), weight=2)},
     )
+    strategy = format_strategy(plan)
 
     assert find(strategy, lambda value: value["kind"] == 0xA5)["kind"] == 0xA5
 
 
 def test_field_ranges_constrain_integer_and_bitfield_generation():
-    int_strategy = format_strategy(
+    int_plan = compile_format(
         {"value": types.i8},
         field_ranges={("value",): FieldRange(min_value=-5, max_value=3)},
     )
-    bitfield_strategy = format_strategy(
+    bitfield_plan = compile_format(
         {"mode": types.Bitfield(bits=4)},
         field_ranges={("mode",): FieldRange(min_value=3, max_value=6)},
     )
+    int_strategy = format_strategy(int_plan)
+    bitfield_strategy = format_strategy(bitfield_plan)
 
     @settings(max_examples=30, derandomize=True)
     @given(int_strategy, bitfield_strategy)
@@ -622,10 +637,11 @@ def test_field_range_targets_a_named_packed_bitfield():
     fmt = {
         "flags": types.Bitfields({"mode": types.Bitfield(bits=4), "ready": types.Bitfield(bits=1)})
     }
-    strategy = format_strategy(
+    plan = compile_format(
         fmt,
         field_ranges={("flags", "mode"): FieldRange(min_value=2, max_value=3)},
     )
+    strategy = format_strategy(plan)
 
     @settings(max_examples=20, derandomize=True)
     @given(strategy)
@@ -644,12 +660,13 @@ def test_bitfield_strategy_includes_curated_width_patterns():
 
 def test_field_derivation_computes_values_after_dependencies():
     fmt = {"count": types.u8, "copy": types.u8}
-    strategy = format_strategy(
+    plan = compile_format(
         fmt,
         field_derivations={
             ("copy",): FieldDerivation(dependencies=(("count",),), derive=_copy_value),
         },
     )
+    strategy = format_strategy(plan)
 
     @settings(max_examples=30, derandomize=True)
     @given(strategy)
@@ -673,7 +690,7 @@ def test_field_derivation_rejects_forward_dependencies():
 
 
 def test_field_derivation_callback_errors_are_visible():
-    strategy = format_strategy(
+    plan = compile_format(
         {"count": types.u8, "copy": types.u8},
         field_derivations={
             ("copy",): FieldDerivation(
@@ -682,6 +699,7 @@ def test_field_derivation_callback_errors_are_visible():
             ),
         },
     )
+    strategy = format_strategy(plan)
 
     with pytest.raises(RuntimeError, match="derived callback failed"):
         find(strategy, lambda _value: True)
@@ -751,28 +769,20 @@ def test_configured_plan_policies_flow_through_strategy_and_fuzzer_apis():
     assert 1 <= decoded["count"] <= 5
     assert decoded["copy"] == decoded["count"]
 
-    fuzzer = Fuzzer(
-        fmt,
-        lambda _data: None,
-        field_ranges=ranges,
-        field_derivations=derivations,
-    )
-    assert fuzzer.plan.field_ranges == plan.field_ranges
-    assert fuzzer.plan.field_derivations == plan.field_derivations
+    fuzzer = Fuzzer(plan, lambda _data: None)
+    assert fuzzer.plan is plan
 
     mixed = find(
-        fuzz_strategy(fmt, field_ranges=ranges, field_derivations=derivations),
+        fuzz_strategy(plan),
         _copy_message_is_valid,
     )
     assert _copy_message_is_valid(mixed)
 
     sequence = find(
         message_sequence_strategy(
-            fmt,
+            plan,
             min_messages=1,
             max_messages=1,
-            field_ranges=ranges,
-            field_derivations=derivations,
         ),
         _copy_sequence_is_valid,
     )

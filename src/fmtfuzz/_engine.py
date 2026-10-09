@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Hashable
+from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -14,14 +14,7 @@ from hypothesis import strategies as st
 from fmtspec import DecodeError, ExcessDecodeError
 
 from ._mutations import mutate_malformed, mutate_valid
-from ._plan import (
-    EnumPolicy,
-    FieldDerivation,
-    FieldHint,
-    FieldRange,
-    FormatPath,
-    compile_format,
-)
+from ._plan import compile_format
 from ._strategies import binary_strategy
 
 if TYPE_CHECKING:
@@ -33,7 +26,7 @@ if TYPE_CHECKING:
     from ._corpus import Corpus
 
 type FuzzTarget = Callable[[bytes], Any]
-type Feedback = Callable[[bytes], Any]
+type Feedback = Callable[[bytes], Hashable | None]
 
 
 def _mutate_valid_with_seed(
@@ -74,6 +67,36 @@ def _malformed_mutations(
     return st.integers().map(partial(_mutate_malformed_with_seed, data, fmt=fmt, max_size=max_size))
 
 
+@dataclass(slots=True, repr=False)
+class _RunState:
+    target: FuzzTarget
+    expected_exceptions: tuple[type[Exception], ...]
+    feedback: Feedback | None
+    corpus: Corpus | None
+    accepted: int = 0
+    rejected: int = 0
+    feedback_keys: set[Hashable] = field(default_factory=set)
+
+    def __repr__(self) -> str:
+        return "_RunState()"
+
+
+def _execute_sample(state: _RunState, data: bytes) -> None:
+    try:
+        state.target(data)
+    except state.expected_exceptions:
+        state.rejected += 1
+    else:
+        state.accepted += 1
+
+    if state.feedback is not None:
+        key = state.feedback(data)
+        if key is not None and key not in state.feedback_keys:
+            state.feedback_keys.add(key)
+            if state.corpus is not None:
+                state.corpus.add(data)
+
+
 @dataclass(frozen=True, slots=True)
 class FuzzConfig:
     """Bounds and reproducibility options for one fuzzing campaign."""
@@ -95,31 +118,24 @@ class FuzzConfig:
 class FuzzResult:
     """Campaign execution counts returned when no target failure occurs."""
 
-    executions: int
     accepted: int
     rejected: int
     corpus_entries: int
 
+    @property
+    def executions(self) -> int:
+        """Return the total number of accepted and rejected executions."""
+        return self.accepted + self.rejected
 
-def fuzz_strategy(  # noqa: PLR0913
+
+def fuzz_strategy(
     fmt: Any,
     *,
     max_size: int = 4096,
     corpus: Corpus | None = None,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[bytes]:
     """Combine valid encodings, valid mutations, and malformed mutations."""
-    plan = compile_format(
-        fmt,
-        field_hints=field_hints,
-        field_ranges=field_ranges,
-        enum_policies=enum_policies,
-        field_derivations=field_derivations,
-    )
-    fmt = plan
+    plan = compile_format(fmt)
     valid = binary_strategy(plan, max_size=max_size)
     base = valid
 
@@ -130,22 +146,18 @@ def fuzz_strategy(  # noqa: PLR0913
         if stored:
             base = st.one_of(valid, st.sampled_from(stored))
 
-    valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=fmt, max_size=max_size))
-    malformed_mutations = base.flatmap(partial(_malformed_mutations, fmt=fmt, max_size=max_size))
+    valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=plan, max_size=max_size))
+    malformed_mutations = base.flatmap(partial(_malformed_mutations, fmt=plan, max_size=max_size))
     return st.one_of(base, valid_mutations, malformed_mutations)
 
 
-def message_sequence_strategy(  # noqa: PLR0913
+def message_sequence_strategy(
     fmt: Any,
     *,
     min_messages: int = 0,
     max_messages: int = 8,
     max_message_size: int = 4096,
     corpus: Corpus | None = None,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-    field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-    enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-    field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
 ) -> SearchStrategy[tuple[bytes, ...]]:
     """Generate a bounded sequence of independently fuzzed binary messages.
 
@@ -166,10 +178,6 @@ def message_sequence_strategy(  # noqa: PLR0913
         fmt,
         max_size=max_message_size,
         corpus=corpus,
-        field_hints=field_hints,
-        field_ranges=field_ranges,
-        enum_policies=enum_policies,
-        field_derivations=field_derivations,
     )
     return st.lists(
         messages,
@@ -187,7 +195,7 @@ class Fuzzer:
     the first input for each new key is added to the optional corpus.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         fmt: Any,
         target: FuzzTarget,
@@ -198,10 +206,6 @@ class Fuzzer:
             ExcessDecodeError,
         ),
         feedback: Feedback | None = None,
-        field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
-        field_ranges: Mapping[FormatPath, FieldRange] | None = None,
-        enum_policies: Mapping[FormatPath, EnumPolicy] | None = None,
-        field_derivations: Mapping[FormatPath, FieldDerivation] | None = None,
     ) -> None:
         if not callable(target):
             raise TypeError("target must be callable")
@@ -210,14 +214,7 @@ class Fuzzer:
             for exc in expected_exceptions
         ):
             raise TypeError("expected_exceptions must contain Exception subclasses")
-        self.plan = compile_format(
-            fmt,
-            field_hints=field_hints,
-            field_ranges=field_ranges,
-            enum_policies=enum_policies,
-            field_derivations=field_derivations,
-        )
-        self.fmt = self.plan.fmt
+        self.plan = compile_format(fmt)
         self.target = target
         self.corpus = corpus
         self.expected_exceptions = expected_exceptions
@@ -233,42 +230,27 @@ class Fuzzer:
         Unexpected target exceptions propagate as Hypothesis failures, which
         includes the minimized binary example.
         """
-        executions = 0
-        accepted = 0
-        rejected = 0
-        feedback_keys: set[Any] = set()
-
-        @given(data=self.strategy(max_size=config.max_input_size))
-        @settings(
+        state = _RunState(
+            target=self.target,
+            expected_exceptions=self.expected_exceptions,
+            feedback=self.feedback,
+            corpus=self.corpus,
+        )
+        runner = given(
+            st.just(state),
+            self.strategy(max_size=config.max_input_size),
+        )(_execute_sample)
+        runner = settings(
             max_examples=config.max_examples,
             deadline=config.deadline,
             database=config.database,
-        )
-        def execute(data: bytes) -> None:
-            nonlocal executions, accepted, rejected
-            executions += 1
-            try:
-                self.target(data)
-            except self.expected_exceptions:
-                rejected += 1
-            else:
-                accepted += 1
-
-            if self.feedback is not None:
-                key = self.feedback(data)
-                if key is not None and key not in feedback_keys:
-                    feedback_keys.add(key)
-                    if self.corpus is not None:
-                        self.corpus.add(data)
-
-        runner = execute
+        )(runner)
         if config.seed is not None:
             runner = hypothesis_seed(config.seed)(runner)
         runner()
 
         return FuzzResult(
-            executions=executions,
-            accepted=accepted,
-            rejected=rejected,
+            accepted=state.accepted,
+            rejected=state.rejected,
             corpus_entries=len(self.corpus) if self.corpus is not None else 0,
         )

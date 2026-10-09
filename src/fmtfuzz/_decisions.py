@@ -10,12 +10,10 @@ from typing import TYPE_CHECKING, Any
 from fmtspec import decode, encode
 
 from ._mutations import mutate_malformed, mutate_valid
-from ._plan import FieldHint, FormatPath, FormatPlan, compile_format
+from ._plan import FormatPlan, compile_format
 from ._strategies import format_strategy
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from hypothesis.strategies import SearchStrategy
 
 
@@ -90,9 +88,8 @@ def decision_seed_strategy(
     fmt: Any,
     *,
     max_size: int = 4096,
-    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
 ) -> SearchStrategy[DecisionSeed]:
     """Generate replayable structured decisions for a format."""
-    plan = compile_format(fmt, field_hints=field_hints)
+    plan = compile_format(fmt)
     strategy: SearchStrategy[Any] = format_strategy(plan, max_size=max_size)
     return strategy.map(partial(_decision_seed_from_value, plan=plan))

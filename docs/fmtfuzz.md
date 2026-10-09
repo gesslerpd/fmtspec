@@ -157,7 +157,10 @@ format tree, field paths, sizes, available enum/branch choices, and discovered
 formats remain accepted as convenience inputs. A plan describes the format as
 it existed at compilation, so do not mutate the source format afterward. Each
 `FormatPlanNode.kind` is the concrete Python type of its format object, such as
-`fmtspec.types.Int`.
+`fmtspec.types.Int`. Configure hints, ranges, enum policies, and derivations on
+the plan with `compile_format()`; the strategy and mutation APIs accept the
+configured plan instead of repeating those options. The resulting plan exposes
+these policies as read-only mappings keyed by field paths.
 
 `FieldHint` supplies preferred values for a scalar field, such as protocol
 magic values, uncommon branch selectors, or a specific unknown enum value.
@@ -257,11 +260,11 @@ plan = compile_format(
 )
 ```
 
-`format_strategy()`, `binary_strategy()`, `fuzz_strategy()`,
-`message_sequence_strategy()`, `Fuzzer`, and `mutate_valid()` accept or retain
-compiled plans containing these policies. Unknown enum values are
-wire-valid-only inputs; target-specific semantic validation remains the
-responsibility of the parser or protocol implementation under test.
+Pass the configured plan to `format_strategy()`, `binary_strategy()`,
+`fuzz_strategy()`, `message_sequence_strategy()`, `Fuzzer`, or `mutate_valid()`
+to apply the policies consistently. Unknown enum values are wire-valid-only
+inputs; target-specific semantic validation remains the responsibility of the
+parser or protocol implementation under test.
 
 `capture_decision_seed(data, fmt)` decodes a canonical input and stores its
 structured value. `replay_decision_seed(seed)` re-encodes it; the seed can also
