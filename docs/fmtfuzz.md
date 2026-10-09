@@ -155,7 +155,9 @@ new key is saved to the optional corpus.
 format tree, field paths, sizes, available enum/branch choices, and discovered
 `Ref` dependencies. Pass the plan to strategy or mutation APIs to reuse it; raw
 formats remain accepted as convenience inputs. A plan describes the format as
-it existed at compilation, so do not mutate the source format afterward.
+it existed at compilation, so do not mutate the source format afterward. Each
+`FormatPlanNode.kind` is the concrete Python type of its format object, such as
+`fmtspec.types.Int`.
 
 `FieldHint` supplies preferred values for a scalar field, such as protocol
 magic values, uncommon branch selectors, or a specific unknown enum value.

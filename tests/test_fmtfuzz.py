@@ -36,6 +36,7 @@ from fmtfuzz import (
     replay_decision_seed,
 )
 from fmtspec import DecodeError, ExcessDecodeError, decode, encode, types
+from fmtspec.types import Switch
 from fmtspec.types._converter import Converter
 
 
@@ -117,6 +118,15 @@ TestMessageSequenceStateMachine.settings = settings(
 @given(format_strategy(types.u8))
 def test_integer_value_strategy(value):
     assert 0 <= value <= 255
+
+
+@settings(max_examples=25, derandomize=True)
+@given(format_strategy((types.u8, types.u16)))
+def test_sequence_format_strategy_generates_a_list(value):
+    assert isinstance(value, list)
+    assert len(value) == 2
+    assert 0 <= value[0] <= 255
+    assert 0 <= value[1] <= 65535
 
 
 @settings(max_examples=30, derandomize=True)
@@ -516,7 +526,7 @@ def test_compiled_plan_tracks_dependencies_and_field_hints():
             "body": types.Switch(types.Ref("kind"), {1: types.u8, 2: types.Bytes(2)}),
         }
     )
-    switch_node = next(node for node in switch_plan.nodes() if node.kind == "switch")
+    switch_node = next(node for node in switch_plan.nodes() if node.kind is Switch)
     assert switch_node.choices == (1, 2)
 
 

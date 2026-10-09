@@ -41,6 +41,7 @@ from ._plan import (
     FieldRange,
     FormatPath,
     FormatPlan,
+    _integer_bounds,
     compile_format,
 )
 
@@ -143,9 +144,7 @@ def _int_strategy(
     high: int | None = None,
     enum_policy: EnumPolicy = EnumPolicy(),
 ) -> SearchStrategy[int]:
-    bits = fmt.size * 8
-    minimum = -(1 << (bits - 1)) if fmt.signed else 0
-    maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
+    minimum, maximum = _integer_bounds(fmt)
     low = minimum if low is None else max(low, minimum)
     high = maximum if high is None else min(high, maximum)
     if low > high:
@@ -217,45 +216,46 @@ def _walk_mapping_constraints(  # noqa: PLR0912
     current: Mapping[str, Any],
     max_size: int,
 ) -> Iterator[tuple[str, str, int | set[Any]]]:
-    if isinstance(child, Sized):
-        if isinstance(child.length, Ref):
-            ref = child.length
-            if ref.parent == 1 and ref.cast is None:
-                inner_size = sizeof(child.fmt)
-                if isinstance(inner_size, int):
-                    yield "allowed", ref.key, {inner_size}
-                else:
-                    yield "limit", ref.key, max_size
-        yield from _walk_mapping_constraints(child.fmt, current, max_size)
-    elif isinstance(child, Array):
-        product = 1
-        for dim in child.dims:
-            if isinstance(dim, Ref) and dim.parent == 1 and dim.cast is None:
-                if dim.key in current:
-                    count = current[dim.key]
-                    if isinstance(count, int) and count >= 0:
-                        product *= count
-                else:
-                    yield "limit", dim.key, max_size // max(product, 1)
-            elif isinstance(dim, int):
-                product *= dim
-        yield from _walk_mapping_constraints(child.element_fmt, current, max_size)
-    elif isinstance(child, Switch):
-        if child.key.parent == 1 and child.default is None:
-            yield "allowed", child.key.key, set(child.cases)
-        for branch in chain(child.cases.values(), (child.default,)):
-            if branch is not None:
+    match child:
+        case Sized():
+            if isinstance(child.length, Ref):
+                ref = child.length
+                if ref.parent == 1 and ref.cast is None:
+                    inner_size = sizeof(child.fmt)
+                    if isinstance(inner_size, int):
+                        yield "allowed", ref.key, {inner_size}
+                    else:
+                        yield "limit", ref.key, max_size
+            yield from _walk_mapping_constraints(child.fmt, current, max_size)
+        case Array():
+            product = 1
+            for dim in child.dims:
+                if isinstance(dim, Ref) and dim.parent == 1 and dim.cast is None:
+                    if dim.key in current:
+                        count = current[dim.key]
+                        if isinstance(count, int) and count >= 0:
+                            product *= count
+                    else:
+                        yield "limit", dim.key, max_size // max(product, 1)
+                elif isinstance(dim, int):
+                    product *= dim
+            yield from _walk_mapping_constraints(child.element_fmt, current, max_size)
+        case Switch():
+            if child.key.parent == 1 and child.default is None:
+                yield "allowed", child.key.key, set(child.cases)
+            for branch in chain(child.cases.values(), (child.default,)):
+                if branch is not None:
+                    yield from _walk_mapping_constraints(branch, current, max_size)
+        case TaggedUnion():
+            if isinstance(child.tag, Ref) and child.tag.parent == 1:
+                yield "allowed", child.tag.key, set(child.fmt_by_tag)
+            for branch in child.fmt_by_tag.values():
                 yield from _walk_mapping_constraints(branch, current, max_size)
-    elif isinstance(child, TaggedUnion):
-        if isinstance(child.tag, Ref) and child.tag.parent == 1:
-            yield "allowed", child.tag.key, set(child.fmt_by_tag)
-        for branch in child.fmt_by_tag.values():
-            yield from _walk_mapping_constraints(branch, current, max_size)
-    elif isinstance(child, (Optional, TakeUntil)):
-        yield from _walk_mapping_constraints(child.fmt, current, max_size)
-    elif isinstance(child, (list, tuple)):
-        for nested in child:
-            yield from _walk_mapping_constraints(nested, current, max_size)
+        case Optional() | TakeUntil():
+            yield from _walk_mapping_constraints(child.fmt, current, max_size)
+        case list() | tuple():
+            for nested in child:
+                yield from _walk_mapping_constraints(nested, current, max_size)
 
 
 def _mapping_constraints(
@@ -301,77 +301,79 @@ def _mapping_field_strategy(  # noqa: PLR0911, PLR0912, PLR0913
     config: FormatPlan | None,
 ) -> SearchStrategy[Any]:
     field_range = config.range_for(path) if config is not None else None
-    if isinstance(fmt, Int) and (
-        upper_bound is not None or allowed_values is not None or field_range is not None
-    ):
-        bits = fmt.size * 8
-        minimum = -(1 << (bits - 1)) if fmt.signed else 0
-        maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
-        minimum = max(minimum, 0) if upper_bound is not None else minimum
-        maximum = min(maximum, upper_bound) if upper_bound is not None else maximum
-        if field_range is not None:
-            minimum = max(
-                minimum,
-                field_range.min_value if field_range.min_value is not None else minimum,
+    match fmt:
+        case Int() as int_fmt if (
+            upper_bound is not None or allowed_values is not None or field_range is not None
+        ):
+            minimum, maximum = _integer_bounds(int_fmt)
+            minimum = max(minimum, 0) if upper_bound is not None else minimum
+            maximum = min(maximum, upper_bound) if upper_bound is not None else maximum
+            if field_range is not None:
+                minimum = max(
+                    minimum,
+                    field_range.min_value if field_range.min_value is not None else minimum,
+                )
+                maximum = min(
+                    maximum,
+                    field_range.max_value if field_range.max_value is not None else maximum,
+                )
+            if minimum > maximum:
+                raise UnsupportedFormatError(f"Field constraints admit no values at {path!r}")
+            if allowed_values is not None:
+                values = [
+                    value
+                    for value in allowed_values
+                    if isinstance(value, int) and minimum <= value <= maximum
+                ]
+                if not values:
+                    raise UnsupportedFormatError(
+                        "No referenced values fit the integer field format"
+                    )
+                return st.sampled_from(values)
+            enum_policy = (
+                config.enum_policy_for(path) if config is not None else _DEFAULT_ENUM_POLICY
             )
-            maximum = min(
-                maximum,
-                field_range.max_value if field_range.max_value is not None else maximum,
+            return _int_strategy(
+                int_fmt,
+                low=minimum,
+                high=maximum,
+                enum_policy=enum_policy,
             )
-        if minimum > maximum:
-            raise UnsupportedFormatError(f"Field constraints admit no values at {path!r}")
-        if allowed_values is not None:
+        case Bitfield() as bitfield_fmt if field_range is not None:
+            return _bitfield_strategy(bitfield_fmt, field_range=field_range)
+        case Str() as string_fmt if allowed_values is not None:
+            try:
+                codecs.lookup(string_fmt.encoding)
+                values = [
+                    value
+                    for value in allowed_values
+                    if isinstance(value, str)
+                    and (
+                        string_fmt.size is None
+                        or len(value.encode(string_fmt.encoding)) == string_fmt.size
+                    )
+                ]
+            except (LookupError, UnicodeEncodeError) as exc:
+                raise UnsupportedFormatError(
+                    f"Cannot generate allowed values for encoding {string_fmt.encoding!r}"
+                ) from exc
+            if not values:
+                raise UnsupportedFormatError("No referenced values fit the string field format")
+            return st.sampled_from(values)
+        case Bytes() as bytes_fmt if allowed_values is not None:
             values = [
                 value
                 for value in allowed_values
-                if isinstance(value, int) and minimum <= value <= maximum
+                if isinstance(value, bytes)
+                and (bytes_fmt.size is None or len(value) == bytes_fmt.size)
             ]
             if not values:
-                raise UnsupportedFormatError("No referenced values fit the integer field format")
+                raise UnsupportedFormatError("No referenced values fit the byte field format")
             return st.sampled_from(values)
-        return _int_strategy(
-            fmt,
-            low=minimum,
-            high=maximum,
-            enum_policy=(
-                config.enum_policy_for(path) if config is not None else _DEFAULT_ENUM_POLICY
-            ),
-        )
-
-    if isinstance(fmt, Bitfield) and field_range is not None:
-        return _bitfield_strategy(fmt, field_range=field_range)
-
-    if allowed_values is not None and isinstance(fmt, Str):
-        try:
-            codecs.lookup(fmt.encoding)
-            values = [
-                value
-                for value in allowed_values
-                if isinstance(value, str)
-                and (fmt.size is None or len(value.encode(fmt.encoding)) == fmt.size)
-            ]
-        except (LookupError, UnicodeEncodeError) as exc:
-            raise UnsupportedFormatError(
-                f"Cannot generate allowed values for encoding {fmt.encoding!r}"
-            ) from exc
-        if not values:
-            raise UnsupportedFormatError("No referenced values fit the string field format")
-        return st.sampled_from(values)
-
-    if allowed_values is not None and isinstance(fmt, Bytes):
-        values = [
-            value
-            for value in allowed_values
-            if isinstance(value, bytes) and (fmt.size is None or len(value) == fmt.size)
-        ]
-        if not values:
-            raise UnsupportedFormatError("No referenced values fit the byte field format")
-        return st.sampled_from(values)
-
-    if allowed_values is not None and isinstance(fmt, Literal):
-        if fmt.value in allowed_values:
-            return st.just(fmt.value)
-        raise UnsupportedFormatError("Literal format value is not an allowed reference value")
+        case Literal() as literal_fmt if allowed_values is not None:
+            if literal_fmt.value in allowed_values:
+                return st.just(literal_fmt.value)
+            raise UnsupportedFormatError("Literal format value is not an allowed reference value")
 
     strategy = _value_strategy(
         fmt,
@@ -409,82 +411,82 @@ def _sized_strategy(  # noqa: PLR0912, PLR0913, PLR0917
     config: FormatPlan | None,
 ) -> SearchStrategy[Any]:
     length = fmt.length
-    is_reference = isinstance(length, Ref)
-    if isinstance(length, Ref):
-        expected = _resolve_ref(length, contexts)
-        if not isinstance(expected, int) or expected < 0 or expected > max_size:
-            raise UnsupportedFormatError(
-                f"Referenced size {expected!r} is outside the supported range 0..{max_size}"
+    match length:
+        case Ref() as ref:
+            expected = _resolve_ref(ref, contexts)
+            if not isinstance(expected, int) or expected < 0 or expected > max_size:
+                raise UnsupportedFormatError(
+                    f"Referenced size {expected!r} is outside the supported range 0..{max_size}"
+                )
+            exact_size = expected
+            is_reference = True
+        case int() as exact_size:
+            if exact_size < 0 or exact_size > max_size:
+                raise UnsupportedFormatError(
+                    f"Sized length {exact_size} is outside the supported range 0..{max_size}"
+                )
+            is_reference = False
+        case _:
+            payload_limit = max_size
+            if isinstance(length, Int):
+                payload_limit = min(payload_limit, _integer_bounds(length)[1])
+            inner_size = sizeof(fmt.fmt)
+            if isinstance(inner_size, int) and inner_size > payload_limit:
+                raise UnsupportedFormatError(
+                    "Inner format size exceeds the maximum representable Sized length"
+                )
+            return _value_strategy(
+                fmt.fmt,
+                contexts,
+                payload_limit,
+                seen,
+                tail=True,
+                path=path,
+                config=config,
             )
-        exact_size = expected
-    elif isinstance(length, int):
-        if length < 0 or length > max_size:
-            raise UnsupportedFormatError(
-                f"Sized length {length} is outside the supported range 0..{max_size}"
-            )
-        exact_size = length
-    else:
-        payload_limit = max_size
-        if isinstance(length, Int):
-            bits = length.size * 8
-            encoded_maximum = (1 << (bits - (1 if length.signed else 0))) - 1
-            payload_limit = min(payload_limit, encoded_maximum)
-        inner_size = sizeof(fmt.fmt)
-        if isinstance(inner_size, int) and inner_size > payload_limit:
-            raise UnsupportedFormatError(
-                "Inner format size exceeds the maximum representable Sized length"
-            )
-        return _value_strategy(
-            fmt.fmt,
-            contexts,
-            payload_limit,
-            seen,
-            tail=True,
-            path=path,
-            config=config,
-        )
 
     inner_fmt = fmt.fmt
-    inner_tail = exact_size == 0 if isinstance(length, (int, Ref)) else True
-    if isinstance(inner_fmt, Bytes):
-        if inner_fmt.size is not None and inner_fmt.size != exact_size:
-            if is_reference:
+    inner_tail = exact_size == 0
+    match inner_fmt:
+        case Bytes():
+            if inner_fmt.size is not None and inner_fmt.size != exact_size:
+                if is_reference:
+                    raise UnsupportedFormatError(
+                        "A Ref-sized field must encode exactly the referenced byte count"
+                    )
+                if inner_fmt.size > exact_size:
+                    raise UnsupportedFormatError("Inner byte format exceeds the Sized field length")
+                return st.binary(min_size=inner_fmt.size, max_size=inner_fmt.size)
+            return st.binary(min_size=exact_size, max_size=exact_size)
+        case Str():
+            if inner_fmt.size is None:
+                return _text_strategy(inner_fmt, max_size, exact_bytes=exact_size)
+            if is_reference and inner_fmt.size != exact_size:
                 raise UnsupportedFormatError(
                     "A Ref-sized field must encode exactly the referenced byte count"
                 )
             if inner_fmt.size > exact_size:
-                raise UnsupportedFormatError("Inner byte format exceeds the Sized field length")
-            return st.binary(min_size=inner_fmt.size, max_size=inner_fmt.size)
-        return st.binary(min_size=exact_size, max_size=exact_size)
+                raise UnsupportedFormatError("Inner string format exceeds the Sized field length")
+            return _text_strategy(inner_fmt, max_size)
+        case _:
+            inner_size = sizeof(inner_fmt)
+            if isinstance(inner_size, int):
+                if inner_size > exact_size:
+                    raise UnsupportedFormatError("Inner format exceeds the Sized field length")
+                return _value_strategy(
+                    inner_fmt,
+                    contexts,
+                    max_size,
+                    seen,
+                    tail=inner_tail,
+                    path=path,
+                    config=config,
+                )
 
-    if isinstance(inner_fmt, Str):
-        if inner_fmt.size is None:
-            return _text_strategy(inner_fmt, max_size, exact_bytes=exact_size)
-        if is_reference and inner_fmt.size != exact_size:
             raise UnsupportedFormatError(
-                "A Ref-sized field must encode exactly the referenced byte count"
+                "A fixed/reference-sized wrapper around a variable-size format "
+                "requires a custom strategy"
             )
-        if inner_fmt.size > exact_size:
-            raise UnsupportedFormatError("Inner string format exceeds the Sized field length")
-        return _text_strategy(inner_fmt, max_size)
-
-    inner_size = sizeof(inner_fmt)
-    if isinstance(inner_size, int):
-        if inner_size > exact_size:
-            raise UnsupportedFormatError("Inner format exceeds the Sized field length")
-        return _value_strategy(
-            inner_fmt,
-            contexts,
-            max_size,
-            seen,
-            tail=inner_tail,
-            path=path,
-            config=config,
-        )
-
-    raise UnsupportedFormatError(
-        "A fixed/reference-sized wrapper around a variable-size format requires a custom strategy"
-    )
 
 
 def _append_list_tail(values: tuple[list[Any], Any]) -> list[Any]:
@@ -500,8 +502,10 @@ def _tail_sensitive(fmt: Any) -> bool:
     if isinstance(fmt, (Optional, Switch, TaggedUnion, Lazy)):
         return True
     if isinstance(fmt, Mapping):
-        children = tuple(fmt.values())
-        return bool(children) and _tail_sensitive(children[-1])
+        last_child = None
+        for child in fmt.values():
+            last_child = child
+        return last_child is not None and _tail_sensitive(last_child)
     if isinstance(fmt, (list, tuple)):
         return bool(fmt) and _tail_sensitive(fmt[-1])
     if isinstance(fmt, Array):
@@ -518,7 +522,7 @@ def _fixed_list_strategy(
     return st.tuples(prefix, last_strategy).map(_append_list_tail)
 
 
-def _array_values_strategy(  # noqa: PLR0911, PLR0913, PLR0917
+def _array_values_strategy(  # noqa: PLR0913, PLR0917
     fmt: Array,
     contexts: FormatContext,
     max_size: int,
@@ -534,86 +538,43 @@ def _array_values_strategy(  # noqa: PLR0911, PLR0913, PLR0917
     if count == 0:
         return st.builds(list)
     if level == len(dimensions) - 1:
-        if tail and tail_sensitive:
-            last_strategy = _value_strategy(
-                fmt.element_fmt,
-                contexts,
-                max_size,
-                seen,
-                tail=True,
-                path=path,
-                config=config,
-            )
-            if count == 1:
-                return last_strategy.map(_single_item_list)
-            item_strategy = _value_strategy(
-                fmt.element_fmt,
-                contexts,
-                max_size,
-                seen,
-                tail=False,
-                path=path,
-                config=config,
-            )
-            return _fixed_list_strategy(item_strategy, last_strategy, count)
-        item_strategy = _value_strategy(
+        make_strategy = partial(
+            _value_strategy,
             fmt.element_fmt,
             contexts,
             max_size,
             seen,
-            tail=False,
             path=path,
             config=config,
         )
-        return st.lists(item_strategy, min_size=count, max_size=count)
+    else:
+        make_strategy = partial(
+            _array_values_strategy,
+            fmt,
+            contexts,
+            max_size,
+            seen,
+            dimensions,
+            level + 1,
+            tail_sensitive=tail_sensitive,
+            path=path,
+            config=config,
+        )
 
     if tail and tail_sensitive:
-        last_strategy = _array_values_strategy(
-            fmt,
-            contexts,
-            max_size,
-            seen,
-            dimensions,
-            level + 1,
-            True,
-            tail_sensitive,
-            path,
-            config,
-        )
+        last_strategy = make_strategy(tail=True)
         if count == 1:
             return last_strategy.map(_single_item_list)
-        item_strategy = _array_values_strategy(
-            fmt,
-            contexts,
-            max_size,
-            seen,
-            dimensions,
-            level + 1,
-            False,
-            tail_sensitive,
-            path,
-            config,
-        )
+        item_strategy = make_strategy(tail=False)
         return _fixed_list_strategy(item_strategy, last_strategy, count)
 
-    item_strategy = _array_values_strategy(
-        fmt,
-        contexts,
-        max_size,
-        seen,
-        dimensions,
-        level + 1,
-        False,
-        tail_sensitive,
-        path,
-        config,
-    )
+    item_strategy = make_strategy(tail=False)
     return st.lists(item_strategy, min_size=count, max_size=count)
 
 
 @st.composite
 def _array_strategy_value(  # noqa: PLR0913, PLR0917
-    draw,
+    draw: Callable[[SearchStrategy[Any]], Any],
     fmt: Array,
     contexts: FormatContext,
     max_size: int,
@@ -726,7 +687,6 @@ def _tagged_union_strategy(  # noqa: PLR0913
     if fmt.struct_tag_field is None or not fmt.fmt_by_tag:
         raise UnsupportedFormatError("TaggedUnion has no supported tagged branches")
 
-    tags = tuple(fmt.fmt_by_tag)
     if isinstance(fmt.tag, Ref):
         if not contexts:
             raise UnsupportedFormatError("A Ref-based TaggedUnion requires a mapping context")
@@ -741,7 +701,7 @@ def _tagged_union_strategy(  # noqa: PLR0913
     return st.one_of(
         *(
             _tagged_union_branch_strategy(tag, fmt, contexts, max_size, seen, tail, path, config)
-            for tag in tags
+            for tag in fmt.fmt_by_tag
         )
     )
 
@@ -825,7 +785,7 @@ def _generated_dependency(
 
 @st.composite
 def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
-    draw,
+    draw: Callable[[SearchStrategy[Any]], Any],
     fmt: Mapping[str, Any],
     contexts: FormatContext,
     max_size: int,
@@ -837,8 +797,8 @@ def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     child_contexts = (*contexts, result)
-    items = tuple(fmt.items())
-    for index, (key, child_fmt) in enumerate(items):
+    last_index = len(fmt) - 1
+    for index, (key, child_fmt) in enumerate(fmt.items()):
         if key in result:
             continue
         if key in constrained_keys:
@@ -881,7 +841,7 @@ def _mapping_value_strategy(  # noqa: PLR0913, PLR0917
             seen,
             upper_bound=limits.get(key),
             allowed_values=allowed.get(key),
-            tail=tail and index == len(items) - 1,
+            tail=tail and index == last_index,
             path=child_path,
             config=config,
         )
@@ -922,167 +882,168 @@ def _value_strategy(  # noqa: PLR0911, PLR0912, PLR0913
     if custom is not None:
         return custom
 
-    if isinstance(fmt, Mapping):
-        constrained_keys = {
-            key
-            for child_fmt in fmt.values()
-            for _, key, _ in _walk_mapping_constraints(child_fmt, {}, max_size)
-        }
-        return _mapping_value_strategy(
-            fmt,
-            contexts,
-            max_size,
-            seen,
-            tail,
-            path,
-            config,
-            constrained_keys,
-        )
-
-    if isinstance(fmt, (list, tuple)):
-        items = tuple(fmt)
-        return st.tuples(
-            *(
-                _value_strategy(
-                    child,
-                    contexts,
-                    max_size,
-                    seen,
-                    tail=tail and index == len(items) - 1,
-                    path=(*path, index),
-                    config=config,
+    match fmt:
+        case Mapping():
+            constrained_keys = {
+                key
+                for child_fmt in fmt.values()
+                for _, key, _ in _walk_mapping_constraints(child_fmt, {}, max_size)
+            }
+            return _mapping_value_strategy(
+                fmt,
+                contexts,
+                max_size,
+                seen,
+                tail,
+                path,
+                config,
+                constrained_keys,
+            )
+        case list() | tuple():
+            last_index = len(fmt) - 1
+            return st.tuples(
+                *(
+                    _value_strategy(
+                        child,
+                        contexts,
+                        max_size,
+                        seen,
+                        tail=tail and index == last_index,
+                        path=(*path, index),
+                        config=config,
+                    )
+                    for index, child in enumerate(fmt)
                 )
-                for index, child in enumerate(items)
+            ).map(list)
+        case bytes() | str():
+            raise UnsupportedFormatError(
+                f"{type(fmt).__name__} cannot be used as an fmtspec format"
             )
-        ).map(list)
-
-    if isinstance(fmt, (bytes, str)):
-        raise UnsupportedFormatError(f"{type(fmt).__name__} cannot be used as an fmtspec format")
-
-    if isinstance(fmt, Int):
-        enum_policy = config.enum_policy_for(path) if config is not None else _DEFAULT_ENUM_POLICY
-        return _int_strategy(fmt, enum_policy=enum_policy)
-    if isinstance(fmt, Float):
-        return st.floats(
-            width=32 if fmt.size == _FLOAT32_SIZE else 64,
-            allow_nan=False,
-            allow_infinity=False,
-        )
-    if isinstance(fmt, Bytes):
-        if fmt.size is None:
+        case Int() as int_fmt:
+            enum_policy = (
+                config.enum_policy_for(path) if config is not None else _DEFAULT_ENUM_POLICY
+            )
+            return _int_strategy(int_fmt, enum_policy=enum_policy)
+        case Float():
+            return st.floats(
+                width=32 if fmt.size == _FLOAT32_SIZE else 64,
+                allow_nan=False,
+                allow_infinity=False,
+            )
+        case Bytes(size=None):
             return st.binary(max_size=max_size)
-        if fmt.size > max_size:
-            raise UnsupportedFormatError(f"Byte size {fmt.size} exceeds max_size={max_size}")
-        return st.binary(min_size=fmt.size, max_size=fmt.size)
-    if isinstance(fmt, Str):
-        return _text_strategy(fmt, max_size)
-    if isinstance(fmt, Literal):
-        return st.just(fmt.value)
-    if isinstance(fmt, Null):
-        return st.none()
-    if isinstance(fmt, Bitfield):
-        field_range = config.range_for(path) if config is not None else None
-        return _bitfield_strategy(fmt, field_range=field_range)
-    if isinstance(fmt, Bitfields):
-        return _value_strategy(
-            fmt.fmt,
-            contexts,
-            max_size,
-            seen,
-            path=path,
-            config=config,
-        )
-    if isinstance(fmt, Optional):
-        inner = _value_strategy(
-            fmt.fmt,
-            contexts,
-            max_size,
-            seen,
-            tail=tail,
-            path=path,
-            config=config,
-        )
-        return st.one_of(st.none(), inner) if tail else inner
-    if isinstance(fmt, Array):
-        return _array_strategy(
-            fmt,
-            contexts,
-            max_size,
-            seen,
-            tail=tail,
-            path=path,
-            config=config,
-        )
-    if isinstance(fmt, Sized):
-        return _sized_strategy(fmt, contexts, max_size, seen, path, config)
-    if isinstance(fmt, Switch):
-        if not tail:
-            raise UnsupportedFormatError(
-                "Switch consumes the remainder of its stream and must be the final field"
+        case Bytes(size=size):
+            if size > max_size:
+                raise UnsupportedFormatError(f"Byte size {size} exceeds max_size={max_size}")
+            return st.binary(min_size=size, max_size=size)
+        case Str():
+            return _text_strategy(fmt, max_size)
+        case Literal():
+            return st.just(fmt.value)
+        case Null():
+            return st.none()
+        case Bitfield():
+            field_range = config.range_for(path) if config is not None else None
+            return _bitfield_strategy(fmt, field_range=field_range)
+        case Bitfields():
+            return _value_strategy(
+                fmt.fmt,
+                contexts,
+                max_size,
+                seen,
+                path=path,
+                config=config,
             )
-        tag = _resolve_ref(fmt.key, contexts)
-        branch = fmt.cases.get(tag, fmt.default)
-        if branch is None:
-            raise UnsupportedFormatError(f"Switch has no case or default for {tag!r}")
-        return _value_strategy(
-            branch,
-            contexts,
-            max_size,
-            seen,
-            tail=True,
-            path=path,
-            config=config,
-        )
-    if isinstance(fmt, TaggedUnion):
-        return _tagged_union_strategy(
-            fmt,
-            contexts,
-            max_size,
-            seen,
-            tail=tail,
-            path=path,
-            config=config,
-        )
-    if isinstance(fmt, TakeUntil):
-        strategy = _value_strategy(
-            fmt.fmt,
-            contexts,
-            max_size,
-            seen,
-            tail=True,
-            path=path,
-            config=config,
-        )
-        return strategy.filter(partial(_valid_take_until_value, fmt=fmt, contexts=contexts))
-    if isinstance(fmt, Lazy):
-        if id(fmt) in seen:
-            raise UnsupportedFormatError(
-                "Recursive Lazy formats require a registered strategy with a recursion bound"
+        case Optional():
+            inner = _value_strategy(
+                fmt.fmt,
+                contexts,
+                max_size,
+                seen,
+                tail=tail,
+                path=path,
+                config=config,
             )
-        inner_fmt = fmt.get_format()
-        return _value_strategy(
-            inner_fmt,
-            contexts,
-            max_size,
-            seen | {id(fmt)},
-            tail=tail,
-            path=path,
-            config=config,
-        )
-
-    if isinstance(fmt, Iterable):
-        return _value_strategy(
-            tuple(fmt),
-            contexts,
-            max_size,
-            seen,
-            path=path,
-            config=config,
-        )
-
-    raise UnsupportedFormatError(
-        f"No strategy is registered for format type {type(fmt).__module__}.{type(fmt).__qualname__}"
-    )
+            return st.one_of(st.none(), inner) if tail else inner
+        case Array():
+            return _array_strategy(
+                fmt,
+                contexts,
+                max_size,
+                seen,
+                tail=tail,
+                path=path,
+                config=config,
+            )
+        case Sized():
+            return _sized_strategy(fmt, contexts, max_size, seen, path, config)
+        case Switch():
+            if not tail:
+                raise UnsupportedFormatError(
+                    "Switch consumes the remainder of its stream and must be the final field"
+                )
+            tag = _resolve_ref(fmt.key, contexts)
+            branch = fmt.cases.get(tag, fmt.default)
+            if branch is None:
+                raise UnsupportedFormatError(f"Switch has no case or default for {tag!r}")
+            return _value_strategy(
+                branch,
+                contexts,
+                max_size,
+                seen,
+                tail=True,
+                path=path,
+                config=config,
+            )
+        case TaggedUnion():
+            return _tagged_union_strategy(
+                fmt,
+                contexts,
+                max_size,
+                seen,
+                tail=tail,
+                path=path,
+                config=config,
+            )
+        case TakeUntil():
+            strategy = _value_strategy(
+                fmt.fmt,
+                contexts,
+                max_size,
+                seen,
+                tail=True,
+                path=path,
+                config=config,
+            )
+            return strategy.filter(partial(_valid_take_until_value, fmt=fmt, contexts=contexts))
+        case Lazy():
+            if id(fmt) in seen:
+                raise UnsupportedFormatError(
+                    "Recursive Lazy formats require a registered strategy with a recursion bound"
+                )
+            return _value_strategy(
+                fmt.get_format(),
+                contexts,
+                max_size,
+                seen | {id(fmt)},
+                tail=tail,
+                path=path,
+                config=config,
+            )
+        case Iterable():
+            return _value_strategy(
+                tuple(fmt),
+                contexts,
+                max_size,
+                seen,
+                path=path,
+                config=config,
+            )
+        case _:
+            raise UnsupportedFormatError(
+                f"No strategy is registered for format type "
+                f"{type(fmt).__module__}.{type(fmt).__qualname__}"
+            )
 
 
 def format_strategy(  # noqa: PLR0913

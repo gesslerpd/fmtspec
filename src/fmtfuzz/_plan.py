@@ -3,28 +3,25 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
+from typing import Literal as TypeLiteral
 
 from fmtspec.types import (
     Array,
     Bitfield,
-    Bitfields,
     Bytes,
     Float,
     Int,
-    Lazy,
     Literal,
     Null,
-    Optional,
     Ref,
     Sized,
     Str,
     Switch,
     TaggedUnion,
-    TakeUntil,
 )
 
 from ._metadata import FormatNode, describe_format
@@ -33,7 +30,7 @@ if TYPE_CHECKING:
     from types import EllipsisType
 
 type FormatPath = tuple[str | int, ...]
-type DependencyKind = str
+type DependencyKind = TypeLiteral["length", "dimension", "switch", "tag"]
 type _Scope = tuple[FormatPath, Mapping[Any, Any]]
 _DEFAULT_MAX_DEPTH = 64
 _MAX_HINT_WEIGHT = 32
@@ -146,7 +143,7 @@ class FormatPlanNode:
     path: FormatPath
     key: Any
     role: str
-    kind: str
+    kind: type[Any]
     fmt: Any
     size: int | EllipsisType | None
     choices: tuple[Any, ...] = ()
@@ -178,7 +175,7 @@ class FormatPlan:
     _derivation_index: Mapping[FormatPath, FieldDerivation] = field(
         init=False, repr=False, compare=False
     )
-    _dependency_index: Mapping[tuple[FormatPath, str], FormatDependency] = field(
+    _dependency_index: Mapping[tuple[FormatPath, DependencyKind], FormatDependency] = field(
         init=False, repr=False, compare=False
     )
     _branch_index: Mapping[FormatPath, FormatPlanNode] = field(
@@ -187,7 +184,7 @@ class FormatPlan:
 
     def __post_init__(self) -> None:
         nodes = tuple(_walk_nodes(self.root))
-        dependencies: dict[tuple[FormatPath, str], FormatDependency] = {}
+        dependencies: dict[tuple[FormatPath, DependencyKind], FormatDependency] = {}
         branches: dict[FormatPath, FormatPlanNode] = {}
         for node in nodes:
             if isinstance(node.fmt, (Switch, TaggedUnion)):
@@ -232,7 +229,7 @@ class FormatPlan:
     def dependency_for(
         self,
         source_path: FormatPath,
-        relation: str,
+        relation: DependencyKind,
     ) -> FormatDependency | None:
         return self._dependency_index.get((source_path, relation))
 
@@ -244,46 +241,6 @@ def _walk_nodes(node: FormatPlanNode):
     yield node
     for child in node.children:
         yield from _walk_nodes(child)
-
-
-def _kind(fmt: Any) -> str:  # noqa: PLR0911, PLR0912
-    if isinstance(fmt, Mapping):
-        return "mapping"
-    if isinstance(fmt, (list, tuple)):
-        return "sequence"
-    if isinstance(fmt, Int):
-        return "integer"
-    if isinstance(fmt, Float):
-        return "float"
-    if isinstance(fmt, Bytes):
-        return "bytes"
-    if isinstance(fmt, Str):
-        return "string"
-    if isinstance(fmt, Literal):
-        return "literal"
-    if isinstance(fmt, Null):
-        return "null"
-    if isinstance(fmt, Optional):
-        return "optional"
-    if isinstance(fmt, Bitfield):
-        return "bitfield"
-    if isinstance(fmt, Bitfields):
-        return "bitfields"
-    if isinstance(fmt, Array):
-        return "array"
-    if isinstance(fmt, Sized):
-        return "sized"
-    if isinstance(fmt, Switch):
-        return "switch"
-    if isinstance(fmt, TaggedUnion):
-        return "tagged_union"
-    if isinstance(fmt, TakeUntil):
-        return "take_until"
-    if isinstance(fmt, Lazy):
-        return "lazy"
-    if isinstance(fmt, Iterable):
-        return "sequence"
-    return f"{type(fmt).__module__}.{type(fmt).__qualname__}"
 
 
 def _choices(fmt: Any) -> tuple[Any, ...]:
@@ -306,7 +263,7 @@ def _child_path(path: FormatPath, child: FormatNode) -> FormatPath:
     return path
 
 
-def _references(fmt: Any) -> Iterator[tuple[str, Ref]]:
+def _references(fmt: Any) -> Iterator[tuple[DependencyKind, Ref]]:
     if isinstance(fmt, Sized) and isinstance(fmt.length, Ref):
         yield "length", fmt.length
     if isinstance(fmt, Array):
@@ -358,7 +315,7 @@ def _compile_node(
         path=path,
         key=node.key,
         role=node.role,
-        kind=_kind(fmt),
+        kind=type(fmt),
         fmt=fmt,
         size=node.size,
         choices=_choices(fmt),
@@ -367,30 +324,42 @@ def _compile_node(
     )
 
 
+def _integer_bounds(fmt: Int) -> tuple[int, int]:
+    bits = fmt.size * 8
+    minimum = -(1 << (bits - 1)) if fmt.signed else 0
+    maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
+    return minimum, maximum
+
+
 def _valid_hint(fmt: Any, value: Any) -> bool:  # noqa: PLR0911
-    if isinstance(fmt, Int):
-        bits = fmt.size * 8
-        minimum = -(1 << (bits - 1)) if fmt.signed else 0
-        maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
-        return isinstance(value, int) and minimum <= value <= maximum
-    if isinstance(fmt, Float):
-        return isinstance(value, float) and math.isfinite(value)
-    if isinstance(fmt, Bytes):
-        return isinstance(value, bytes) and (fmt.size is None or len(value) == fmt.size)
-    if isinstance(fmt, Str):
-        if not isinstance(value, str):
+    match fmt:
+        case Int() as int_fmt:
+            minimum, maximum = _integer_bounds(int_fmt)
+            return isinstance(value, int) and minimum <= value <= maximum
+        case Float():
+            return isinstance(value, float) and math.isfinite(value)
+        case Bytes() as bytes_fmt:
+            return isinstance(value, bytes) and (
+                bytes_fmt.size is None or len(value) == bytes_fmt.size
+            )
+        case Str() as string_fmt:
+            if not isinstance(value, str):
+                return False
+            try:
+                return (
+                    string_fmt.size is None
+                    or len(value.encode(string_fmt.encoding)) == string_fmt.size
+                )
+            except (LookupError, UnicodeEncodeError):
+                return False
+        case Literal() as literal_fmt:
+            return value == literal_fmt.value
+        case Null():
+            return value is None
+        case Bitfield() as bitfield_fmt:
+            return isinstance(value, (bool, int)) and 0 <= int(value) <= bitfield_fmt.mask
+        case _:
             return False
-        try:
-            return fmt.size is None or len(value.encode(fmt.encoding)) == fmt.size
-        except (LookupError, UnicodeEncodeError):
-            return False
-    if isinstance(fmt, Literal):
-        return value == fmt.value
-    if isinstance(fmt, Null):
-        return value is None
-    if isinstance(fmt, Bitfield):
-        return isinstance(value, (bool, int)) and 0 <= int(value) <= fmt.mask
-    return False
 
 
 def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
@@ -440,7 +409,8 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
             invalid = [value for value in normalized.values if not _valid_hint(node.fmt, value)]
             if invalid:
                 raise FormatPlanError(
-                    f"Field hint values {invalid!r} are invalid for {node.kind} field {path!r}"
+                    f"Field hint values {invalid!r} are invalid for "
+                    f"{node.kind.__name__} field {path!r}"
                 )
             normalized_hints.append((path, normalized))
 
@@ -458,9 +428,7 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
             if not isinstance(field_range, FieldRange):
                 raise TypeError(f"Field range at {path!r} must be a FieldRange")
             if isinstance(node.fmt, Int):
-                bits = node.fmt.size * 8
-                minimum = -(1 << (bits - 1)) if node.fmt.signed else 0
-                maximum = (1 << (bits - (1 if node.fmt.signed else 0))) - 1
+                minimum, maximum = _integer_bounds(node.fmt)
             elif isinstance(node.fmt, Bitfield):
                 minimum, maximum = 0, node.fmt.mask
             else:
@@ -496,8 +464,11 @@ def compile_format(  # noqa: PLR0912, PLR0913, PLR0915
 
     normalized_derivations: list[tuple[FormatPath, FieldDerivation]] = []
     if field_derivations is not None:
-        ordered_fields = tuple(node for node in _walk_nodes(root) if node.role in ("field", "item"))
-        field_order = {node.path: index for index, node in enumerate(ordered_fields)}
+        field_order = {
+            node.path: index
+            for index, node in enumerate(_walk_nodes(root))
+            if node.role in ("field", "item")
+        }
         for path, derivation in field_derivations.items():
             if not isinstance(path, tuple):
                 raise TypeError("field derivation paths must be tuples")

@@ -18,6 +18,7 @@ from ._metadata import FormatNode as FormatNode
 from ._metadata import describe_format as describe_format
 from ._mutations import mutate_malformed as mutate_malformed
 from ._mutations import mutate_valid as mutate_valid
+from ._plan import DependencyKind as DependencyKind
 from ._plan import FieldHint as FieldHint
 from ._plan import FieldRange as FieldRange
 from ._plan import EnumPolicy as EnumPolicy

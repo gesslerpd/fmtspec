@@ -45,6 +45,7 @@ from ._plan import (
     FormatPath,
     FormatPlan,
     FormatPlanNode,
+    _integer_bounds,
     compile_format,
 )
 
@@ -127,9 +128,7 @@ def _integer_replacement(
     field_range: FieldRange | None,
     enum_policy: EnumPolicy,
 ) -> Any:
-    bits = fmt.size * 8
-    low = -(1 << (bits - 1)) if fmt.signed else 0
-    high = (1 << (bits - (1 if fmt.signed else 0))) - 1
+    low, high = _integer_bounds(fmt)
     if field_range is not None:
         low = max(low, field_range.min_value if field_range.min_value is not None else low)
         high = min(high, field_range.max_value if field_range.max_value is not None else high)
@@ -173,49 +172,46 @@ def _replacement(  # noqa: PLR0911, PLR0912
     field_range: FieldRange | None = None,
     enum_policy: EnumPolicy = EnumPolicy(),
 ) -> Any:
-    if isinstance(fmt, Int):
-        return _integer_replacement(fmt, value, rng, field_range, enum_policy)
-
-    if isinstance(fmt, Bitfield):
-        return _bitfield_replacement(fmt, value, rng, field_range)
-
-    if isinstance(fmt, Float):
-        alternatives = [0.0, 1.0, -1.0, 0.5, -0.5]
-        alternatives = [candidate for candidate in alternatives if candidate != value]
-        return rng.choice(alternatives) if alternatives else _NO_CHANGE
-
-    if isinstance(fmt, Bytes):
-        if not value:
-            return _NO_CHANGE
-        replacement = bytearray(value)
-        index = rng.randrange(len(replacement))
-        replacement[index] ^= 1 << rng.randrange(8)
-        return bytes(replacement)
-
-    if isinstance(fmt, Str):
-        if not value:
-            return _NO_CHANGE
-        index = rng.randrange(len(value))
-        current = value[index]
-        try:
-            current_size = len(current.encode(fmt.encoding))
-        except UnicodeEncodeError:
-            return _NO_CHANGE
-        alphabet = string.printable + "éΩ中"
-        alternatives = []
-        for candidate in alphabet:
-            if candidate == current:
-                continue
+    match fmt:
+        case Int() as int_fmt:
+            return _integer_replacement(int_fmt, value, rng, field_range, enum_policy)
+        case Bitfield() as bitfield_fmt:
+            return _bitfield_replacement(bitfield_fmt, value, rng, field_range)
+        case Float():
+            alternatives = [
+                candidate for candidate in (0.0, 1.0, -1.0, 0.5, -0.5) if candidate != value
+            ]
+            return rng.choice(alternatives) if alternatives else _NO_CHANGE
+        case Bytes():
+            if not value:
+                return _NO_CHANGE
+            replacement = bytearray(value)
+            index = rng.randrange(len(replacement))
+            replacement[index] ^= 1 << rng.randrange(8)
+            return bytes(replacement)
+        case Str() as string_fmt:
+            if not value:
+                return _NO_CHANGE
+            index = rng.randrange(len(value))
+            current = value[index]
             try:
-                if len(candidate.encode(fmt.encoding)) == current_size:
-                    alternatives.append(candidate)
+                current_size = len(current.encode(string_fmt.encoding))
             except UnicodeEncodeError:
-                continue
-        if not alternatives:
+                return _NO_CHANGE
+            alternatives = []
+            for candidate in string.printable + "éΩ中":
+                if candidate == current:
+                    continue
+                try:
+                    if len(candidate.encode(string_fmt.encoding)) == current_size:
+                        alternatives.append(candidate)
+                except UnicodeEncodeError:
+                    continue
+            if not alternatives:
+                return _NO_CHANGE
+            return value[:index] + rng.choice(alternatives) + value[index + 1 :]
+        case _:
             return _NO_CHANGE
-        return value[:index] + rng.choice(alternatives) + value[index + 1 :]
-
-    return _NO_CHANGE
 
 
 def _walk_mutable(
@@ -357,89 +353,100 @@ def _default_value(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     exact_size: int | None = None,
 ) -> Any:
-    if isinstance(fmt, Mapping):
-        result: dict[Any, Any] = {}
-        nested_contexts = (*contexts, result)
-        for key, child_fmt in fmt.items():
-            result[key] = _default_value(child_fmt, rng, nested_contexts)
-        return result
-    if isinstance(fmt, Int):
-        if fmt.enum:
-            return int(rng.choice(fmt.enum))
-        return 0
-    if isinstance(fmt, Bitfield):
-        return False if fmt.bits == 1 else 0
-    if isinstance(fmt, Float):
-        return 0.0
-    if isinstance(fmt, Bytes):
-        size = exact_size if exact_size is not None else fmt.size
-        if size is not None and fmt.size is not None and size != fmt.size:
-            return _NO_CHANGE
-        return bytes(size or 0)
-    if isinstance(fmt, Str):
-        size = exact_size if exact_size is not None else fmt.size
-        if size is None:
-            return ""
-        try:
-            candidate = "A" * size
-            return candidate if len(candidate.encode(fmt.encoding)) == size else _NO_CHANGE
-        except (LookupError, UnicodeEncodeError):
-            return _NO_CHANGE
-    if isinstance(fmt, Literal):
-        return fmt.value
-    if isinstance(fmt, Null):
-        return None
-    if isinstance(fmt, Optional):
-        return None
-    if isinstance(fmt, Bitfields):
-        return _default_value(fmt.fmt, rng, contexts)
-    if isinstance(fmt, Sized):
-        if isinstance(fmt.length, Ref):
-            size = _resolve_ref(fmt.length, contexts)
-        elif isinstance(fmt.length, int):
-            size = fmt.length
-        else:
-            size = None
-        return _default_value(
-            fmt.fmt,
-            rng,
-            contexts,
-            exact_size=size if isinstance(size, int) and size >= 0 else None,
-        )
-    if isinstance(fmt, Array):
-        if not fmt.dims:
-            return []
-        dimensions: list[int] = []
-        for dimension in fmt.dims:
-            if isinstance(dimension, int):
-                dimensions.append(dimension)
-            elif isinstance(dimension, Ref):
-                value = _resolve_ref(dimension, contexts)
-                if not isinstance(value, int) or value < 0:
+    match fmt:
+        case Mapping():
+            result: dict[Any, Any] = {}
+            nested_contexts = (*contexts, result)
+            for key, child_fmt in fmt.items():
+                result[key] = _default_value(child_fmt, rng, nested_contexts)
+            return result
+        case Int() as int_fmt:
+            return int(rng.choice(int_fmt.enum)) if int_fmt.enum else 0
+        case Bitfield() as bitfield_fmt:
+            return False if bitfield_fmt.bits == 1 else 0
+        case Float():
+            return 0.0
+        case Bytes() as bytes_fmt:
+            size = exact_size if exact_size is not None else bytes_fmt.size
+            if size is not None and bytes_fmt.size is not None and size != bytes_fmt.size:
+                return _NO_CHANGE
+            return bytes(size or 0)
+        case Str() as string_fmt:
+            size = exact_size if exact_size is not None else string_fmt.size
+            if size is None:
+                return ""
+            try:
+                candidate = "A" * size
+                return (
+                    candidate if len(candidate.encode(string_fmt.encoding)) == size else _NO_CHANGE
+                )
+            except (LookupError, UnicodeEncodeError):
+                return _NO_CHANGE
+        case Literal() as literal_fmt:
+            return literal_fmt.value
+        case Null() | Optional():
+            return None
+        case Bitfields() as bitfields_fmt:
+            return _default_value(bitfields_fmt.fmt, rng, contexts)
+        case Sized() as sized_fmt:
+            match sized_fmt.length:
+                case Ref() as ref:
+                    size = _resolve_ref(ref, contexts)
+                case int() as fixed_size:
+                    size = fixed_size
+                case _:
+                    size = None
+            return _default_value(
+                sized_fmt.fmt,
+                rng,
+                contexts,
+                exact_size=size if isinstance(size, int) and size >= 0 else None,
+            )
+        case Array() as array_fmt:
+            if not array_fmt.dims:
+                return []
+            dimensions: list[int] = []
+            for dimension in array_fmt.dims:
+                match dimension:
+                    case int() as count:
+                        dimensions.append(count)
+                    case Ref() as ref:
+                        value = _resolve_ref(ref, contexts)
+                        if not isinstance(value, int) or value < 0:
+                            return _NO_CHANGE
+                        dimensions.append(value)
+                    case _:
+                        return _NO_CHANGE
+            return _build_array_value(array_fmt.element_fmt, dimensions, 0, rng, contexts)
+        case Switch() as switch_fmt:
+            tag = (
+                _resolve_ref(switch_fmt.key, contexts)
+                if isinstance(switch_fmt.key, Ref)
+                else _NO_CHANGE
+            )
+            branch = switch_fmt.cases.get(tag, switch_fmt.default)
+            if branch is None and switch_fmt.cases:
+                branch = next(iter(switch_fmt.cases.values()))
+            return _default_value(branch, rng, contexts) if branch is not None else _NO_CHANGE
+        case TaggedUnion() as union_fmt:
+            tag = (
+                _resolve_ref(union_fmt.tag, contexts)
+                if isinstance(union_fmt.tag, Ref)
+                else _NO_CHANGE
+            )
+            if tag not in union_fmt.fmt_by_tag:
+                if not union_fmt.fmt_by_tag:
                     return _NO_CHANGE
-                dimensions.append(value)
-            else:
-                return _NO_CHANGE
-        return _build_array_value(fmt.element_fmt, dimensions, 0, rng, contexts)
-    if isinstance(fmt, Switch):
-        tag = _resolve_ref(fmt.key, contexts) if isinstance(fmt.key, Ref) else _NO_CHANGE
-        branch = fmt.cases.get(tag, fmt.default)
-        if branch is None and fmt.cases:
-            branch = next(iter(fmt.cases.values()))
-        return _default_value(branch, rng, contexts) if branch is not None else _NO_CHANGE
-    if isinstance(fmt, TaggedUnion):
-        tag = _resolve_ref(fmt.tag, contexts) if isinstance(fmt.tag, Ref) else _NO_CHANGE
-        if tag not in fmt.fmt_by_tag:
-            if not fmt.fmt_by_tag:
-                return _NO_CHANGE
-            tag = next(iter(fmt.fmt_by_tag))
-        return _default_value(fmt.fmt_by_tag[tag], rng, contexts)
-    if isinstance(fmt, TakeUntil):
-        return _default_value(fmt.fmt, rng, contexts)
-    if isinstance(fmt, (list, tuple)):
-        values = [_default_value(child_fmt, rng, contexts) for child_fmt in fmt]
-        return values if isinstance(fmt, list) else tuple(values)
-    return _NO_CHANGE
+                tag = next(iter(union_fmt.fmt_by_tag))
+            return _default_value(union_fmt.fmt_by_tag[tag], rng, contexts)
+        case TakeUntil() as take_until_fmt:
+            return _default_value(take_until_fmt.fmt, rng, contexts)
+        case list() as formats:
+            return [_default_value(child_fmt, rng, contexts) for child_fmt in formats]
+        case tuple() as formats:
+            return tuple(_default_value(child_fmt, rng, contexts) for child_fmt in formats)
+        case _:
+            return _NO_CHANGE
 
 
 def _updated_value(
@@ -709,9 +716,7 @@ def mutate_valid(  # noqa: PLR0912, PLR0913
 def _inspection_tree(data: bytes, fmt: Any) -> InspectNode | None:
     try:
         _, tree = decode_inspect(data, fmt)
-    except DecodeError as exc:
-        return exc.inspect_node
-    except ExcessDecodeError as exc:
+    except (DecodeError, ExcessDecodeError) as exc:
         return exc.inspect_node
     return tree
 
@@ -732,9 +737,7 @@ def _unlisted_tag(
     fmt = target.fmt
     current = target.value
     if isinstance(fmt, Int):
-        bits = fmt.size * 8
-        minimum = -(1 << (bits - 1)) if fmt.signed else 0
-        maximum = (1 << (bits - (1 if fmt.signed else 0))) - 1
+        minimum, maximum = _integer_bounds(fmt)
         candidates = (minimum, maximum, 0, 1, current ^ 1, current + 1, current - 1)
         return next(
             (
@@ -747,7 +750,7 @@ def _unlisted_tag(
     if isinstance(fmt, Str):
         try:
             byte_size = len(current.encode(fmt.encoding))
-            candidates = [char * len(current) for char in ("!", "?", "~", "x", "0", "\0")]
+            candidates = (char * len(current) for char in ("!", "?", "~", "x", "0", "\0"))
             return next(
                 (
                     candidate
@@ -775,9 +778,7 @@ def _dependency_corruptions(  # noqa: PLR0912, PLR0915
         current = target.value
         replacement = _NO_CHANGE
         if dependency.relation in ("length", "dimension") and isinstance(target.fmt, Int):
-            bits = target.fmt.size * 8
-            minimum = -(1 << (bits - 1)) if target.fmt.signed else 0
-            maximum = (1 << (bits - (1 if target.fmt.signed else 0))) - 1
+            minimum, maximum = _integer_bounds(target.fmt)
             if isinstance(current, int):
                 if current < maximum:
                     replacement = current + 1
@@ -881,23 +882,26 @@ def mutate_malformed(  # noqa: PLR0911, PLR0912
         return b"\x00"
 
     kind, offset, size = rng.choice(operations)
-    if kind == "flip":
-        result = bytearray(data)
-        index = rng.randrange(len(result))
-        result[index] ^= 1 << rng.randrange(8)
-        return bytes(result)
-    if kind == "truncate":
-        return data[:offset]
-    if kind == "insert":
-        return data[:offset] + rng.randbytes(size) + data[offset:]
-    if kind == "delete":
-        return data[:offset] + data[offset + size :]
-    if kind == "duplicate":
-        part = data[offset : offset + size]
-        return data[: offset + size] + part + data[offset + size :]
-
-    result = bytearray(data)
-    result[offset : offset + size] = bytes(size)
-    if bytes(result) == data:
-        result[offset] ^= 1
-    return bytes(result)
+    match kind:
+        case "flip":
+            result = bytearray(data)
+            index = rng.randrange(len(result))
+            result[index] ^= 1 << rng.randrange(8)
+            return bytes(result)
+        case "truncate":
+            return data[:offset]
+        case "insert":
+            return data[:offset] + rng.randbytes(size) + data[offset:]
+        case "delete":
+            return data[:offset] + data[offset + size :]
+        case "duplicate":
+            part = data[offset : offset + size]
+            return data[: offset + size] + part + data[offset + size :]
+        case "zero":
+            result = bytearray(data)
+            result[offset : offset + size] = bytes(size)
+            if bytes(result) == data:
+                result[offset] ^= 1
+            return bytes(result)
+        case _:
+            raise AssertionError(f"Unknown malformed mutation operation {kind!r}")
