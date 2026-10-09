@@ -42,8 +42,10 @@ result.
 
 Use `format_strategy(fmt)` to generate Python values,
 `binary_strategy(fmt)` to generate their valid encodings, or
-`fuzz_strategy(fmt)` to combine valid encodings, same-shape scalar mutations,
-and wire-level mutations. A strategy can be used in an ordinary Hypothesis test:
+`fuzz_strategy(fmt)` to combine valid encodings, structure-preserving and
+structural valid mutations, and malformed mutations. `binary_strategy()` is
+valid-only; the mixed campaign strategy also includes malformed inputs. A
+strategy can be used in an ordinary Hypothesis test:
 
 ```python
 from hypothesis import given
@@ -65,6 +67,45 @@ hypothesis fuzz tests/test_packet_parser.py
 `fmtfuzz` does not implement its own code-coverage scheduler; `Fuzzer` accepts a
 feedback callback that returns a hashable novelty key. The first input for each
 new key is saved to the optional corpus.
+
+## Compiled plans, hints, and decision seeds
+
+`compile_format(fmt)` creates an explicit reusable `FormatPlan` containing the
+format tree, field paths, sizes, available enum/branch choices, and discovered
+`Ref` dependencies. Pass the plan to strategy or mutation APIs to reuse it; raw
+formats remain accepted as convenience inputs. A plan describes the format as
+it existed at compilation, so do not mutate the source format afterward.
+
+`FieldHint` supplies known values for a scalar field, such as protocol magic
+values or uncommon branch selectors. Values are sampled alongside ordinary
+strategy values, with `weight` controlling their relative frequency:
+
+```python
+from fmtfuzz import FieldHint, compile_format, binary_strategy
+
+plan = compile_format(
+    packet_fmt,
+    field_hints={
+        ("kind",): FieldHint((0x7E, 0xA5), weight=3),
+    },
+)
+packet_bytes = binary_strategy(plan, max_size=1024)
+```
+
+`capture_decision_seed(data, fmt)` decodes a canonical input and stores its
+structured value. `replay_decision_seed(seed)` re-encodes it; the seed can also
+produce a valid or malformed mutation with `seed.mutate(...)`. Decision seeds
+are in-memory Python objects tied to their originating plan, not serialized
+cross-process tokens. Capture raises `DecisionSeedError` if decoding and
+re-encoding would not reproduce the input exactly.
+
+`mutate_valid()` can change same-width scalar values, toggle optional fields,
+insert or remove dynamic array elements while updating referenced dimensions,
+and select another switch or tagged-union branch. A candidate is returned only
+if the complete output remains decodable and within `max_size`.
+`mutate_malformed()` targets referenced lengths/dimensions, selectors, and
+terminator bytes when possible, alongside its existing field-boundary and
+raw-byte operations.
 
 ## Format support and custom strategies
 
@@ -126,3 +167,9 @@ fmtfuzz --format my_protocol:packet_fmt --target my_protocol:parse_packet --max-
 
 The imported module must be importable in the current environment. The target
 is trusted Python code executed in-process.
+
+## Generation benchmark
+
+Run `uv run python scripts/bench_fmtfuzz.py` to compare format compilation and
+repeated binary generation from a raw format versus a reused compiled plan.
+The benchmark is informational and does not impose a performance threshold.

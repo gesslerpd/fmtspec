@@ -132,9 +132,10 @@ dataclass or `msgspec.Struct`.
 
 The [`fmtfuzz` package](docs/fmtfuzz.md) derives Hypothesis strategies from an
 `fmtspec` format, then combines valid samples with inspection-guided mutations.
-Use its `Fuzzer` API for a bounded campaign, or compose `fuzz_strategy(...)`
-with a Hypothesis test and run that test with HypoFuzz for coverage-guided
-exploration.
+Its reusable format plans support reference-aware array, optional, and branch
+mutations, field-value hints, and replayable decision seeds. Use its `Fuzzer`
+API for a bounded campaign, or compose `fuzz_strategy(...)` with a Hypothesis
+test and run that test with HypoFuzz for coverage-guided exploration.
 
 ### Inspect Layouts While Debugging
 

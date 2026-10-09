@@ -3,24 +3,31 @@ from typing import Annotated
 
 import msgspec
 import pytest
-from hypothesis import given, settings
+from hypothesis import find, given, settings
 from hypothesis import strategies as st
 
 from fmtfuzz import (
     Corpus,
+    DecisionSeed,
+    FieldHint,
     FormatChild,
     FormatMetadata,
     FormatNode,
+    FormatPlan,
     FuzzConfig,
     Fuzzer,
     binary_strategy,
+    capture_decision_seed,
+    compile_format,
+    decision_seed_strategy,
     describe_format,
     format_strategy,
     mutate_malformed,
     mutate_valid,
     register_format_strategy,
+    replay_decision_seed,
 )
-from fmtspec import decode, encode, types
+from fmtspec import DecodeError, ExcessDecodeError, decode, encode, types
 from fmtspec.types._converter import Converter
 
 
@@ -324,3 +331,166 @@ def test_corpus_rejects_oversized_input(tmp_path):
 
     with pytest.raises(ValueError, match="exceeds"):
         corpus.add(b"too large")
+
+
+def test_compiled_plan_tracks_dependencies_and_field_hints():
+    fmt = {
+        "count": types.u8,
+        "items": types.array(types.u16, dims=types.Ref("count")),
+    }
+
+    plan = compile_format(fmt, field_hints={("count",): FieldHint((2, 3), weight=3)})
+
+    assert isinstance(plan, FormatPlan)
+    assert plan.dependencies[0].source_path == ("items",)
+    assert plan.dependencies[0].target_path == ("count",)
+    assert plan.dependencies[0].relation == "dimension"
+    assert plan.hint_for(("count",)) == FieldHint((2, 3), weight=3)
+    assert compile_format(plan) is plan
+    switch_plan = compile_format(
+        {
+            "kind": types.u8,
+            "body": types.Switch(types.Ref("kind"), {1: types.u8, 2: types.Bytes(2)}),
+        }
+    )
+    switch_node = next(node for node in switch_plan.nodes() if node.kind == "switch")
+    assert switch_node.choices == (1, 2)
+
+
+def test_field_hints_are_generated_alongside_ordinary_values():
+    fmt = {"opcode": types.u8}
+    strategy = format_strategy(fmt, field_hints={("opcode",): FieldHint((0xA5,), weight=2)})
+
+    assert find(strategy, lambda value: value["opcode"] == 0xA5) == {"opcode": 0xA5}
+
+
+def test_valid_mutation_changes_dynamic_array_shape_with_its_count():
+    fmt = {
+        "count": types.u8,
+        "items": types.array(types.u8, dims=types.Ref("count")),
+    }
+    original = encode({"count": 2, "items": [1, 2]}, fmt)
+    results = (mutate_valid(original, fmt, seed=seed, max_size=16) for seed in range(32))
+    decoded = [decode(data, fmt) for data in results]
+
+    assert any(len(value["items"]) != 2 for value in decoded)
+    assert all(value["count"] == len(value["items"]) for value in decoded)
+
+
+def test_valid_mutation_toggles_optional_presence():
+    fmt = types.Optional(types.u8)
+    original = encode(None, fmt)
+
+    mutated = mutate_valid(original, fmt, seed=1)
+
+    assert decode(mutated, fmt) == 0
+
+
+def test_valid_mutation_can_select_an_alternate_switch_branch():
+    fmt = {
+        "kind": types.u8,
+        "body": types.Switch(types.Ref("kind"), {1: types.u8, 2: types.Bytes(2)}),
+    }
+    original = encode({"kind": 1, "body": 7}, fmt)
+
+    mutated = next(
+        mutate_valid(original, fmt, seed=seed)
+        for seed in range(32)
+        if decode(mutate_valid(original, fmt, seed=seed), fmt)["kind"] == 2
+    )
+
+    assert decode(mutated, fmt) == {"kind": 2, "body": b"\0\0"}
+
+
+def test_valid_mutation_can_select_an_alternate_tagged_union_branch():
+    fmt = {
+        "kind": types.Str(3),
+        "body": types.TaggedUnion(
+            tag=types.Ref("kind"),
+            fmt_map={0: NumberBranch, 1: RawBranch},
+        ),
+    }
+    original = encode(
+        {"kind": "num", "body": {"kind": "num", "value": 7}},
+        fmt,
+    )
+    mutated = next(
+        mutate_valid(original, fmt, seed=seed)
+        for seed in range(32)
+        if decode(mutate_valid(original, fmt, seed=seed), fmt)["kind"] == "raw"
+    )
+
+    decoded = decode(mutated, fmt)
+    assert decoded["kind"] == "raw"
+    assert type(decoded["body"]) is RawBranch
+
+
+def test_malformed_mutation_targets_referenced_length_fields():
+    fmt = {
+        "length": types.u8,
+        "payload": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
+    }
+    original = encode({"length": 2, "payload": b"ok"}, fmt)
+    targeted = None
+    for seed in range(32):
+        candidate = mutate_malformed(original, fmt, seed=seed, max_size=8)
+        if candidate[1:] == original[1:] and candidate[0] != original[0]:
+            targeted = candidate
+            break
+
+    assert targeted is not None
+    with pytest.raises((DecodeError, ExcessDecodeError)):
+        decode(targeted, fmt)
+
+
+def test_malformed_mutation_targets_switch_selectors():
+    fmt = {
+        "kind": types.u8,
+        "body": types.Switch(types.Ref("kind"), {1: types.u8, 2: types.Bytes(2)}),
+    }
+    original = encode({"kind": 1, "body": 7}, fmt)
+    targeted = None
+    for seed in range(32):
+        candidate = mutate_malformed(original, fmt, seed=seed, max_size=8)
+        if candidate[1:] == original[1:] and candidate[0] not in (1, 2):
+            targeted = candidate
+            break
+
+    assert targeted is not None
+    with pytest.raises(DecodeError):
+        decode(targeted, fmt)
+
+
+def test_malformed_mutation_targets_terminator_bytes():
+    fmt = types.TakeUntil(types.str_ascii, b"\0")
+    original = encode("ok", fmt)
+    targeted = None
+    for seed in range(32):
+        candidate = mutate_malformed(original, fmt, seed=seed, max_size=8)
+        if candidate[:-1] == original[:-1] and candidate[-1:] != original[-1:]:
+            targeted = candidate
+            break
+
+    assert targeted is not None
+    with pytest.raises(DecodeError):
+        decode(targeted, fmt)
+
+
+def test_decision_seed_capture_replay_and_strategy():
+    fmt = {
+        "length": types.u8,
+        "payload": types.Sized(length=types.Ref("length"), fmt=types.Bytes()),
+    }
+    original = encode({"length": 2, "payload": b"ok"}, fmt)
+    seed = capture_decision_seed(original, fmt)
+
+    assert isinstance(seed, DecisionSeed)
+    assert replay_decision_seed(seed) == original
+    assert decode(seed.mutate(seed=4, max_size=16), fmt) is not None
+
+    @settings(max_examples=8, derandomize=True)
+    @given(decision_seed_strategy(types.u8))
+    def check(generated):
+        assert replay_decision_seed(generated) == encode(generated.value, types.u8)
+
+    check()

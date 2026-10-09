@@ -32,7 +32,7 @@ from fmtspec.types import (
     TakeUntil,
 )
 
-from ._metadata import describe_format
+from ._plan import FieldHint, FormatPath, compile_format
 
 type FormatContext = tuple[Mapping[str, Any], ...]
 type StrategyFactory = Callable[[Any, FormatContext, int], SearchStrategy[Any]]
@@ -218,6 +218,8 @@ def _mapping_field_strategy(  # noqa: PLR0913
     upper_bound: int | None,
     allowed_values: set[Any] | None,
     tail: bool,
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> SearchStrategy[Any]:
     if isinstance(fmt, Int) and (upper_bound is not None or allowed_values is not None):
         bits = fmt.size * 8
@@ -268,7 +270,15 @@ def _mapping_field_strategy(  # noqa: PLR0913
             return st.just(fmt.value)
         raise UnsupportedFormatError("Literal format value is not an allowed reference value")
 
-    strategy = _value_strategy(fmt, contexts, max_size, seen, tail=tail)
+    strategy = _value_strategy(
+        fmt,
+        contexts,
+        max_size,
+        seen,
+        tail=tail,
+        path=path,
+        value_hints=value_hints,
+    )
     if allowed_values is not None:
         strategy = strategy.filter(partial(_is_allowed, allowed_values=allowed_values))
     if upper_bound is not None:
@@ -287,11 +297,13 @@ def _count_strategy(
     return strategy.filter(partial(_is_count, maximum=max_size))
 
 
-def _sized_strategy(  # noqa: PLR0912
+def _sized_strategy(  # noqa: PLR0912, PLR0913, PLR0917
     fmt: Sized,
     contexts: FormatContext,
     max_size: int,
     seen: frozenset[int],
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> SearchStrategy[Any]:
     length = fmt.length
     is_reference = isinstance(length, Ref)
@@ -319,7 +331,15 @@ def _sized_strategy(  # noqa: PLR0912
             raise UnsupportedFormatError(
                 "Inner format size exceeds the maximum representable Sized length"
             )
-        return _value_strategy(fmt.fmt, contexts, payload_limit, seen, tail=True)
+        return _value_strategy(
+            fmt.fmt,
+            contexts,
+            payload_limit,
+            seen,
+            tail=True,
+            path=path,
+            value_hints=value_hints,
+        )
 
     inner_fmt = fmt.fmt
     inner_tail = exact_size == 0 if isinstance(length, (int, Ref)) else True
@@ -349,7 +369,15 @@ def _sized_strategy(  # noqa: PLR0912
     if isinstance(inner_size, int):
         if inner_size > exact_size:
             raise UnsupportedFormatError("Inner format exceeds the Sized field length")
-        return _value_strategy(inner_fmt, contexts, max_size, seen, tail=inner_tail)
+        return _value_strategy(
+            inner_fmt,
+            contexts,
+            max_size,
+            seen,
+            tail=inner_tail,
+            path=path,
+            value_hints=value_hints,
+        )
 
     raise UnsupportedFormatError(
         "A fixed/reference-sized wrapper around a variable-size format requires a custom strategy"
@@ -365,6 +393,8 @@ def _build_array_values(  # noqa: PLR0913, PLR0917
     dimensions: list[int],
     level: int,
     tail: bool,
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> list[Any]:
     count = dimensions[level]
     if level == len(dimensions) - 1:
@@ -376,6 +406,8 @@ def _build_array_values(  # noqa: PLR0913, PLR0917
                     max_size,
                     seen,
                     tail=tail and index == count - 1,
+                    path=path,
+                    value_hints=value_hints,
                 )
             )
             for index in range(count)
@@ -390,18 +422,22 @@ def _build_array_values(  # noqa: PLR0913, PLR0917
             dimensions,
             level + 1,
             tail and index == count - 1,
+            path,
+            value_hints,
         )
         for index in range(count)
     ]
 
 
-def _array_strategy(
+def _array_strategy(  # noqa: PLR0913
     fmt: Array,
     contexts: FormatContext,
     max_size: int,
     seen: frozenset[int],
     *,
     tail: bool,
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> SearchStrategy[list[Any]]:
     element_size = sizeof(fmt.element_fmt)
     element_limit = (
@@ -433,7 +469,19 @@ def _array_strategy(
             dimensions.append(count)
             product *= count
 
-        return _build_array_values(draw, fmt, contexts, max_size, seen, dimensions, 0, tail)
+        element_path = (*path, *("*" for _ in dimensions))
+        return _build_array_values(
+            draw,
+            fmt,
+            contexts,
+            max_size,
+            seen,
+            dimensions,
+            0,
+            tail,
+            element_path,
+            value_hints,
+        )
 
     return make_array()
 
@@ -445,6 +493,8 @@ def _tagged_union_branch_strategy(  # noqa: PLR0913, PLR0917
     max_size: int,
     seen: frozenset[int],
     tail: bool,
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> SearchStrategy[Any]:
     return _value_strategy(
         fmt.fmt_by_tag[tag],
@@ -452,16 +502,20 @@ def _tagged_union_branch_strategy(  # noqa: PLR0913, PLR0917
         max_size,
         seen,
         tail=tail,
+        path=path,
+        value_hints=value_hints,
     ).map(partial(_add_union_tag, tag=tag, fmt=fmt, contexts=contexts))
 
 
-def _tagged_union_strategy(
+def _tagged_union_strategy(  # noqa: PLR0913
     fmt: TaggedUnion,
     contexts: FormatContext,
     max_size: int,
     seen: frozenset[int],
     *,
     tail: bool,
+    path: FormatPath,
+    value_hints: Mapping[FormatPath, FieldHint],
 ) -> SearchStrategy[Any]:
     if fmt.struct_tag_field is None or not fmt.fmt_by_tag:
         raise UnsupportedFormatError("TaggedUnion has no supported tagged branches")
@@ -475,9 +529,16 @@ def _tagged_union_strategy(
             tag = parent[fmt.tag.key]
             if tag not in fmt.fmt_by_tag:
                 raise UnsupportedFormatError(f"Unknown TaggedUnion tag {tag!r}")
-            return _tagged_union_branch_strategy(tag, fmt, contexts, max_size, seen, tail)
+            return _tagged_union_branch_strategy(
+                tag, fmt, contexts, max_size, seen, tail, path, value_hints
+            )
     return st.one_of(
-        *(_tagged_union_branch_strategy(tag, fmt, contexts, max_size, seen, tail) for tag in tags)
+        *(
+            _tagged_union_branch_strategy(
+                tag, fmt, contexts, max_size, seen, tail, path, value_hints
+            )
+            for tag in tags
+        )
     )
 
 
@@ -533,14 +594,17 @@ def _within_size(data: bytes, *, maximum: int) -> bool:
     return len(data) <= maximum
 
 
-def _value_strategy(  # noqa: PLR0911, PLR0912
+def _value_strategy(  # noqa: PLR0911, PLR0912, PLR0913, PLR0915
     fmt: Any,
     contexts: FormatContext,
     max_size: int,
     seen: frozenset[int],
     *,
     tail: bool = True,
+    path: FormatPath = (),
+    value_hints: Mapping[FormatPath, FieldHint] | None = None,
 ) -> SearchStrategy[Any]:
+    field_hints = value_hints or {}
     custom = _registered_strategy(fmt, contexts, max_size)
     if custom is not None:
         return custom
@@ -555,17 +619,36 @@ def _value_strategy(  # noqa: PLR0911, PLR0912
             for index, (key, child_fmt) in enumerate(items):
                 if key not in result:
                     limits, allowed = _mapping_constraints(fmt, max_size, result)
-                    result[key] = draw(
-                        _mapping_field_strategy(
-                            child_fmt,
-                            child_contexts,
-                            max_size,
-                            seen,
-                            upper_bound=limits.get(key),
-                            allowed_values=allowed.get(key),
-                            tail=tail and index == len(items) - 1,
-                        )
+                    child_path = (*path, key)
+                    strategy = _mapping_field_strategy(
+                        child_fmt,
+                        child_contexts,
+                        max_size,
+                        seen,
+                        upper_bound=limits.get(key),
+                        allowed_values=allowed.get(key),
+                        tail=tail and index == len(items) - 1,
+                        path=child_path,
+                        value_hints=field_hints,
                     )
+                    hint = field_hints.get(child_path)
+                    if hint is not None:
+                        values = tuple(
+                            value
+                            for value in hint.values
+                            if (allowed.get(key) is None or value in allowed[key])
+                            and (
+                                limits.get(key) is None
+                                or _is_bounded_nonnegative_int(value, upper_bound=limits[key])
+                            )
+                        )
+                        if not values:
+                            raise UnsupportedFormatError(
+                                f"All field hints conflict with constraints at {child_path!r}"
+                            )
+                        hinted = st.sampled_from(values)
+                        strategy = st.one_of(strategy, *(hinted for _ in range(hint.weight)))
+                    result[key] = draw(strategy)
             return result
 
         return mapping_value()
@@ -580,6 +663,8 @@ def _value_strategy(  # noqa: PLR0911, PLR0912
                     max_size,
                     seen,
                     tail=tail and index == len(items) - 1,
+                    path=(*path, index),
+                    value_hints=field_hints,
                 )
                 for index, child in enumerate(items)
             )
@@ -613,14 +698,37 @@ def _value_strategy(  # noqa: PLR0911, PLR0912
             return st.booleans()
         return st.integers(min_value=0, max_value=fmt.mask)
     if isinstance(fmt, Bitfields):
-        return _value_strategy(fmt.fmt, contexts, max_size, seen)
+        return _value_strategy(
+            fmt.fmt,
+            contexts,
+            max_size,
+            seen,
+            path=path,
+            value_hints=field_hints,
+        )
     if isinstance(fmt, Optional):
-        inner = _value_strategy(fmt.fmt, contexts, max_size, seen, tail=tail)
+        inner = _value_strategy(
+            fmt.fmt,
+            contexts,
+            max_size,
+            seen,
+            tail=tail,
+            path=path,
+            value_hints=field_hints,
+        )
         return st.one_of(st.none(), inner) if tail else inner
     if isinstance(fmt, Array):
-        return _array_strategy(fmt, contexts, max_size, seen, tail=tail)
+        return _array_strategy(
+            fmt,
+            contexts,
+            max_size,
+            seen,
+            tail=tail,
+            path=path,
+            value_hints=field_hints,
+        )
     if isinstance(fmt, Sized):
-        return _sized_strategy(fmt, contexts, max_size, seen)
+        return _sized_strategy(fmt, contexts, max_size, seen, path, field_hints)
     if isinstance(fmt, Switch):
         if not tail:
             raise UnsupportedFormatError(
@@ -630,11 +738,35 @@ def _value_strategy(  # noqa: PLR0911, PLR0912
         branch = fmt.cases.get(tag, fmt.default)
         if branch is None:
             raise UnsupportedFormatError(f"Switch has no case or default for {tag!r}")
-        return _value_strategy(branch, contexts, max_size, seen, tail=True)
+        return _value_strategy(
+            branch,
+            contexts,
+            max_size,
+            seen,
+            tail=True,
+            path=path,
+            value_hints=field_hints,
+        )
     if isinstance(fmt, TaggedUnion):
-        return _tagged_union_strategy(fmt, contexts, max_size, seen, tail=tail)
+        return _tagged_union_strategy(
+            fmt,
+            contexts,
+            max_size,
+            seen,
+            tail=tail,
+            path=path,
+            value_hints=field_hints,
+        )
     if isinstance(fmt, TakeUntil):
-        strategy = _value_strategy(fmt.fmt, contexts, max_size, seen, tail=True)
+        strategy = _value_strategy(
+            fmt.fmt,
+            contexts,
+            max_size,
+            seen,
+            tail=True,
+            path=path,
+            value_hints=field_hints,
+        )
         return strategy.filter(partial(_valid_take_until_value, fmt=fmt, contexts=contexts))
     if isinstance(fmt, Lazy):
         if id(fmt) in seen:
@@ -648,17 +780,31 @@ def _value_strategy(  # noqa: PLR0911, PLR0912
             max_size,
             seen | {id(fmt)},
             tail=tail,
+            path=path,
+            value_hints=field_hints,
         )
 
     if isinstance(fmt, Iterable):
-        return _value_strategy(tuple(fmt), contexts, max_size, seen)
+        return _value_strategy(
+            tuple(fmt),
+            contexts,
+            max_size,
+            seen,
+            path=path,
+            value_hints=field_hints,
+        )
 
     raise UnsupportedFormatError(
         f"No strategy is registered for format type {type(fmt).__module__}.{type(fmt).__qualname__}"
     )
 
 
-def format_strategy(fmt: Any, *, max_size: int = 4096) -> SearchStrategy[Any]:
+def format_strategy(
+    fmt: Any,
+    *,
+    max_size: int = 4096,
+    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+) -> SearchStrategy[Any]:
     """Build a Hypothesis strategy for Python values accepted by ``fmt``.
 
     ``max_size`` bounds generated variable-length values and arrays. Dynamic
@@ -666,12 +812,24 @@ def format_strategy(fmt: Any, *, max_size: int = 4096) -> SearchStrategy[Any]:
     """
     if max_size < 1:
         raise ValueError("max_size must be at least 1")
-    describe_format(fmt)
-    return _value_strategy(fmt, (), max_size, frozenset())
+    plan = compile_format(fmt, field_hints=field_hints)
+    return _value_strategy(
+        plan.fmt,
+        (),
+        max_size,
+        frozenset(),
+        value_hints=dict(plan.field_hints),
+    )
 
 
-def binary_strategy(fmt: Any, *, max_size: int = 4096) -> SearchStrategy[bytes]:
+def binary_strategy(
+    fmt: Any,
+    *,
+    max_size: int = 4096,
+    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
+) -> SearchStrategy[bytes]:
     """Build a strategy for valid encoded bytes accepted by ``fmt``."""
-    values = format_strategy(fmt, max_size=max_size)
-    strategy = values.map(partial(_encode_value, fmt=fmt))
+    plan = compile_format(fmt, field_hints=field_hints)
+    values = format_strategy(plan, max_size=max_size)
+    strategy = values.map(partial(_encode_value, fmt=plan.fmt))
     return strategy.filter(partial(_within_size, maximum=max_size))

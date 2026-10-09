@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -14,6 +14,7 @@ from hypothesis import strategies as st
 from fmtspec import DecodeError, ExcessDecodeError
 
 from ._mutations import mutate_malformed, mutate_valid
+from ._plan import FieldHint, FormatPath, compile_format
 from ._strategies import binary_strategy
 
 if TYPE_CHECKING:
@@ -28,8 +29,14 @@ type FuzzTarget = Callable[[bytes], Any]
 type Feedback = Callable[[bytes], Any]
 
 
-def _mutate_valid_with_seed(data: bytes, seed: int, *, fmt: Any) -> bytes:
-    return mutate_valid(data, fmt, seed=seed)
+def _mutate_valid_with_seed(
+    data: bytes,
+    seed: int,
+    *,
+    fmt: Any,
+    max_size: int,
+) -> bytes:
+    return mutate_valid(data, fmt, seed=seed, max_size=max_size)
 
 
 def _mutate_malformed_with_seed(
@@ -42,8 +49,13 @@ def _mutate_malformed_with_seed(
     return mutate_malformed(data, fmt, seed=seed, max_size=max_size)
 
 
-def _valid_mutations(data: bytes, *, fmt: Any) -> SearchStrategy[bytes]:
-    return st.integers().map(partial(_mutate_valid_with_seed, data, fmt=fmt))
+def _valid_mutations(
+    data: bytes,
+    *,
+    fmt: Any,
+    max_size: int,
+) -> SearchStrategy[bytes]:
+    return st.integers().map(partial(_mutate_valid_with_seed, data, fmt=fmt, max_size=max_size))
 
 
 def _malformed_mutations(
@@ -87,9 +99,12 @@ def fuzz_strategy(
     *,
     max_size: int = 4096,
     corpus: Corpus | None = None,
+    field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
 ) -> SearchStrategy[bytes]:
     """Combine valid encodings, valid mutations, and malformed mutations."""
-    valid = binary_strategy(fmt, max_size=max_size)
+    plan = compile_format(fmt, field_hints=field_hints)
+    fmt = plan
+    valid = binary_strategy(plan, max_size=max_size)
     sources: list[SearchStrategy[bytes]] = [valid]
 
     if corpus is not None:
@@ -100,7 +115,7 @@ def fuzz_strategy(
             sources.append(st.sampled_from(stored))
 
     base = sources[0] if len(sources) == 1 else st.one_of(*sources)
-    valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=fmt))
+    valid_mutations = valid.flatmap(partial(_valid_mutations, fmt=fmt, max_size=max_size))
     malformed_mutations = base.flatmap(partial(_malformed_mutations, fmt=fmt, max_size=max_size))
     return st.one_of(base, valid_mutations, malformed_mutations)
 
@@ -114,7 +129,7 @@ class Fuzzer:
     the first input for each new key is added to the optional corpus.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         fmt: Any,
         target: FuzzTarget,
@@ -125,6 +140,7 @@ class Fuzzer:
             ExcessDecodeError,
         ),
         feedback: Feedback | None = None,
+        field_hints: Mapping[FormatPath, FieldHint | tuple[Any, ...]] | None = None,
     ) -> None:
         if not callable(target):
             raise TypeError("target must be callable")
@@ -133,7 +149,8 @@ class Fuzzer:
             for exc in expected_exceptions
         ):
             raise TypeError("expected_exceptions must contain Exception subclasses")
-        self.fmt = fmt
+        self.plan = compile_format(fmt, field_hints=field_hints)
+        self.fmt = self.plan.fmt
         self.target = target
         self.corpus = corpus
         self.expected_exceptions = expected_exceptions
@@ -141,7 +158,7 @@ class Fuzzer:
 
     def strategy(self, *, max_size: int = 4096) -> SearchStrategy[bytes]:
         """Return a strategy suitable for ``@given`` or HypoFuzz tests."""
-        return fuzz_strategy(self.fmt, max_size=max_size, corpus=self.corpus)
+        return fuzz_strategy(self.plan, max_size=max_size, corpus=self.corpus)
 
     def run(self, config: FuzzConfig = FuzzConfig()) -> FuzzResult:
         """Run a bounded Hypothesis campaign.
