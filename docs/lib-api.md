@@ -21,9 +21,9 @@ Rules (BER) / Distinguished Encoding Rules (DER) Tag-Length-Value structure.
 
 ```python
 from fmtspec.lib.asn1 import (
-    ASN1Class,    # Enum for tag class (UNIVERSAL, APPLICATION, CONTEXT, PRIVATE)
-    UniversalTag, # IntEnum for universal tag numbers
-    asn1,         # pre-built singleton — use this in practice
+    ASN1Class,  # Enum for tag class (UNIVERSAL, APPLICATION, CONTEXT, PRIVATE)
+    UniversalTag,  # IntEnum for universal tag numbers
+    asn1,  # pre-built singleton — use this in practice
 )
 ```
 
@@ -48,8 +48,12 @@ seq = {
 assert decode(encode(seq, asn1), asn1)["value"][0]["value"] == 42
 
 # Context-specific tags
-node = {"tag_class": ASN1Class.CONTEXT, "tag": 0, "constructed": True,
-        "value": [{"tag": UniversalTag.INTEGER, "value": 5}]}
+node = {
+    "tag_class": ASN1Class.CONTEXT,
+    "tag": 0,
+    "constructed": True,
+    "value": [{"tag": UniversalTag.INTEGER, "value": 5}],
+}
 result = decode(encode(node, asn1), asn1)
 assert result["tag_class"] == ASN1Class.CONTEXT
 assert result["value"][0]["value"] == 5
@@ -71,8 +75,8 @@ Provides a fmtspec `Type` that encodes and decodes the
 
 ```python
 from fmtspec.lib.msgpack import (
-    MsgPack,      # the Type class, for customisation
-    msgpack,      # pre-built singleton (float64, list, dict)
+    MsgPack,  # the Type class, for customisation
+    msgpack,  # pre-built singleton (float64, list, dict)
     msgpack_f32,  # pre-built singleton with float32
 )
 ```

@@ -6,9 +6,11 @@
 `fmtspec` is a Python library for binary encoding and decoding built around
 composable format objects.
 
-The only dependency is the excellent
+The core serialization API depends on the excellent
 <a href="https://jcristharif.com/msgspec/" target="_blank" rel="noopener">msgspec</a>
-package.
+package. The `fmtfuzz` package also uses
+<a href="https://hypothesis.readthedocs.io/" target="_blank" rel="noopener">Hypothesis</a>
+for format-derived strategies and shrinking.
 
 ## Installation
 
@@ -33,9 +35,12 @@ $ uv add fmtspec
 - `fmtspec.lib` for a collection of ready-made embeddable formats (e.g. [MessagePack](https://msgpack.org/index.html))
 - `encode_inspect(...)`, `decode_inspect(...)`, and `format_tree(...)` for
   inspecting parse trees during encoding and decoding
+- `fmtfuzz.describe_format(...)` and the `fmtfuzz.FormatChild` /
+  `fmtfuzz.FormatMetadata` protocol for custom format structure
 - Informative exceptions with failure paths and format context
 - `Context` and `fmtspec.stream` for implementing custom `Type` classes on the
   public API
+- `fmtfuzz` for structure-aware valid and malformed binary protocol fuzzing
 
 ## Typical Workflow
 
@@ -122,6 +127,14 @@ assert roundtripped == record
 
 This is the most ergonomic path when your wire layout already matches a
 dataclass or `msgspec.Struct`.
+
+### Fuzz Binary Formats
+
+The [`fmtfuzz` package](docs/fmtfuzz.md) derives Hypothesis strategies from an
+`fmtspec` format, then combines valid samples with inspection-guided mutations.
+Use its `Fuzzer` API for a bounded campaign, or compose `fuzz_strategy(...)`
+with a Hypothesis test and run that test with HypoFuzz for coverage-guided
+exploration.
 
 ### Inspect Layouts While Debugging
 
@@ -338,4 +351,3 @@ These reference pages cover the details by topic:
 - [docs/stream-api.md](docs/stream-api.md) for custom `Type` implementations,
   `Context`, and `fmtspec.stream`
 - [docs/lib-api.md](docs/lib-api.md) for `fmtspec.lib` — ready-made library of formats built with this framework (e.g. ASN.1, MessagePack)
-

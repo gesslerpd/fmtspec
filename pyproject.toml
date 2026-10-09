@@ -33,8 +33,12 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "hypothesis>=6.168.5",
     "msgspec>=0.20.0",
 ]
+
+[project.scripts]
+fmtfuzz = "fmtfuzz._cli:main"
 
 [project.urls]
 Homepage = "https://github.com/gesslerpd/fmtspec"
@@ -50,7 +54,6 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "hypofuzz>=25.11.1",
-    "hypothesis>=6.168.5",
     "msgpack>=1.1.2",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",

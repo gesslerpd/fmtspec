@@ -39,11 +39,11 @@ from typing import Annotated
 
 from fmtspec import ExcessDecodeError, decode, types
 
+
 @dataclass(frozen=True, slots=True)
 class Record:
     name: Annotated[str, types.TakeUntil(types.str_utf8, b"\0")]
     count: Annotated[int, types.u32le]
-
 
 
 record = decode(b"widget\0\x03\x00\x00\x00", type=Record)

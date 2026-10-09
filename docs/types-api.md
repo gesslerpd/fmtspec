@@ -197,8 +197,8 @@ Use this when an earlier field determines the layout of the current field.
 from fmtspec import decode, encode, types
 
 fmt = {
-	"kind": types.u8,
-	"body": types.Switch(types.Ref("kind"), {1: types.u16}, default=types.bytes_),
+    "kind": types.u8,
+    "body": types.Switch(types.Ref("kind"), {1: types.u16}, default=types.bytes_),
 }
 
 assert decode(encode({"kind": 1, "body": 5}, fmt), fmt)["body"] == 5
@@ -218,16 +218,17 @@ from fmtspec import decode, encode, types
 # SNI extension: array of {name_type: u8, host_name: length-prefixed bytes}
 sni_fmt = types.Sized(
     length=types.u16,
-    fmt=types.array({
-        "name_type": types.u8,
-        "host_name": types.Sized(length=types.u16, fmt=types.Bytes()),
-    })
+    fmt=types.array(
+        {
+            "name_type": types.u8,
+            "host_name": types.Sized(length=types.u16, fmt=types.Bytes()),
+        }
+    ),
 )
 
 # ALPN extension: array of {protocol_name: length-prefixed bytes}
 alpn_fmt = types.Sized(
-    length=types.u16,
-    fmt=types.array(types.Sized(length=types.u8, fmt=types.Bytes()))
+    length=types.u16, fmt=types.array(types.Sized(length=types.u8, fmt=types.Bytes()))
 )
 
 EXT_SNI = 0x0000
@@ -296,8 +297,8 @@ node_fmt = None
 node_ref = types.Lazy(lambda: node_fmt)
 
 node_fmt = {
-	"value": types.u8,
-	"children": types.Sized(length=types.u8, fmt=types.array(node_ref)),
+    "value": types.u8,
+    "children": types.Sized(length=types.u8, fmt=types.array(node_ref)),
 }
 ```
 
@@ -325,11 +326,11 @@ Pack multiple named `Bitfield(...)` definitions into one integer-backed value.
 from fmtspec import decode, encode, types
 
 flags = types.Bitfields(
-	size=1,
-	fields={
-		"opcode": types.Bitfield(bits=4),
-		"fin": types.Bitfield(bits=1, offset=7),
-	},
+    size=1,
+    fields={
+        "opcode": types.Bitfield(bits=4),
+        "fin": types.Bitfield(bits=1, offset=7),
+    },
 )
 
 decoded = decode(encode({"opcode": 2, "fin": True}, flags), flags)
